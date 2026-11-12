@@ -110,6 +110,24 @@ test('refuses a remote whose push URL was redirected or rewritten away from the 
   }
 });
 
+test('a push URL redirected after the first check, during the commit, is caught before the push', async () => {
+  const f = fixture(), elsewhere = f.remote.replace('remote.git', 'elsewhere.git');
+  try {
+    git(f.root, 'init', '-q', '--bare', elsewhere);
+    const { run } = await ready(f), h = harness(f);
+    const exec: Exec = async (file, args, options) => {
+      const out = await h.exec(file, args, options);
+      if (file === 'git' && args[0] === 'commit') git(f.dir, 'config', 'remote.origin.pushurl', elsewhere);
+      return out;
+    };
+    const result = await deliverRun(run, target(f), deps(f, h, { exec }));
+    assert.equal(result.status, 'needs_attention'); assert.match((result as { reason: string }).reason, /no longer matches/i);
+    assert.equal(h.state.calls.some(c => c.args[0] === 'push' || (c.file === 'gh' && c.args[1] === 'create')), false, 'nothing was pushed and no PR was created');
+    assert.equal(git(elsewhere, 'for-each-ref'), '', 'nothing reached the redirected repository'); assert.equal(git(f.remote, 'branch', '--list'), '');
+    assert.equal(h.state.records.at(-1)?.phase, 'committed', 'the local commit is recorded so a resume does not redo it');
+  } finally { f.done(); }
+});
+
 test('every gh call is pinned to the authorized repository, and a URL that names none is refused', async () => {
   const f = fixture();
   try {

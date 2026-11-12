@@ -198,8 +198,9 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
   const line = async (...args: string[]) => (await git(...args)).trim();
 
   // `git push <remote>` follows `remote.<name>.pushurl` and `pushInsteadOf`, which a plain `get-url` does not show, so every fetch and push URL must be the authorized one.
+  const remoteUrls = async () => [...(await line('remote', 'get-url', '--all', remote)).split(/\r?\n/), ...(await line('remote', 'get-url', '--push', '--all', remote)).split(/\r?\n/)];
   let urls: string[];
-  try { urls = [...(await line('remote', 'get-url', '--all', remote)).split(/\r?\n/), ...(await line('remote', 'get-url', '--push', '--all', remote)).split(/\r?\n/)]; }
+  try { urls = await remoteUrls(); }
   catch { return refused('The remote is not configured in this worktree'); }
   if (urls.some(url => url !== remoteURL)) return refused('The configured remote does not match the authorized destination');
   // `gh` otherwise picks the repository from the worktree's remotes (or a stored default), which may not be the authorized one.
@@ -258,6 +259,8 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
       await deps.record(known);
     }
 
+    step = 'checking the remote before the push';
+    if ((await remoteUrls()).some(url => url !== remoteURL)) return attention('The remote no longer matches the authorized destination; nothing was pushed');
     step = 'git push';
     await push('push', remote, `refs/heads/${branch}:refs/heads/${branch}`);
     step = 'gh pr create';
