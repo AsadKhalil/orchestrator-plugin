@@ -7,7 +7,7 @@ import { step, criterion } from './fixtures/plan-data.js';
 async function setup() {
   const records=new Map<string,unknown>(),repo=new RunRepository({async get(k){return structuredClone(records.get(k));},async set(k,v){records.set(k,structuredClone(v));}});
   let run=await repo.create('run','Feature','base'); run=await repo.setPlan(run.id,run.revision,{steps:[step('Implement')],acceptance:[criterion('Works')],questions:[],areas:['src'],rollback:'Revert',validationCommands:['test']});
-  run=await repo.approve(run.id,run.revision,run.planHash!);run=await repo.begin(run.id,run.revision);run=await repo.recordStepOutcome(run.id,run.revision,{stepID:'implement',inputContentVersion:'base',contentVersion:'diff',evidence:'done'});
+  run=await repo.approve(run.id,run.revision,run.planHash!);run=await repo.begin(run.id,run.revision);run=await repo.recordStepOutcome(run.id,run.revision,{stepID:'implement',inputContentVersion:'base',contentVersion:'diff',evidence:'done'});run=await repo.beginValidation(run.id,run.revision);
   const reviewer={providerID:'p',id:'m',variant:'high',vendor:'reviewer',modelVersion:'v1'};
   run=await repo.startReview(run.id,run.revision,{planHash:run.planHash!,diffHash:'diff',validation:{diffHash:'diff',commands:[{command:'test',exitCode:0}]},reviewer,contributingVendors:['coder'],budgetAvailable:true});
   const model={providerID:'p',id:'m',variant:'high'};

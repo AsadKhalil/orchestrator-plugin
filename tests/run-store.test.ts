@@ -75,6 +75,7 @@ test('persists bounded review state and refuses altered review history', async (
   run = await repo.approve('r', run.revision, run.planHash!);
   run = await repo.begin('r', run.revision);
   run = await repo.recordStepOutcome('r', run.revision, { stepID: 'implement', inputContentVersion: 'base', contentVersion: 'diff', evidence: 'implementation' });
+  run = await repo.beginValidation('r', run.revision);
   run = await repo.startReview('r', run.revision, { planHash: run.planHash!, diffHash: 'diff', validation: { diffHash: 'diff', commands: [{ command: 'test', exitCode: 0 }] }, reviewer: { providerID: 'p', id: 'm', variant: null, vendor: 'review', modelVersion: 'v1' }, contributingVendors: ['coder'], budgetAvailable: true });
   run = await repo.applyReviewerOutput('r', run.revision, JSON.stringify({ planHash: run.planHash!, diffHash: 'diff', verdict: 'approve', findings: [] }));
   assert.equal((await new RunRepository(store).get('r')).state, 'ready_for_acceptance');
@@ -118,7 +119,7 @@ test('review cannot proceed while an approved validation job is missing or faile
   const store = memoryStore(), repo = new RunRepository(store);
   const testStep = { ...step('Run tests', 'tests'), taskKind: 'validate' as const, inference: false, execution: { kind: 'command' as const, command: 'test', deadlineMs: 1000, readyProbe: null } };
   let run = await repo.create('blocked', 'Requirement', 'base');
-  run = await repo.setPlan('blocked', run.revision, { ...plan, steps: [testStep] }); run = await repo.approve('blocked', run.revision, run.planHash!); run = await repo.begin('blocked', run.revision);
+  run = await repo.setPlan('blocked', run.revision, { ...plan, steps: [testStep] }); run = await repo.approve('blocked', run.revision, run.planHash!); run = await repo.begin('blocked', run.revision); run = await repo.beginValidation('blocked', run.revision);
   const review = { planHash: run.planHash!, diffHash: 'v1', validation: { diffHash: 'v1', commands: [{ command: 'test', exitCode: 0 }] }, reviewer: { providerID: 'p', id: 'm', variant: null, vendor: 'review', modelVersion: 'v1' }, contributingVendors: ['coder'], budgetAvailable: true };
   await assert.rejects(repo.startReview('blocked', run.revision, review), /validation job/i);
   run = await repo.recordJobIntent('blocked', run.revision, 'tests', { id: 'job', sessionID: 'ses_1', contentVersion: 'v1', now: 1000 });
@@ -139,9 +140,9 @@ test('persists ordinary step outcomes and gates dependent jobs by content versio
   run = await repo.recordStepOutcome('deps', run.revision, { stepID: 'implement', inputContentVersion: 'v0', contentVersion: 'v1', evidence: 'Implementation completed' });
   const restored = await new RunRepository(store).get('deps'); assert.deepEqual(restored.outcomes, run.outcomes);
   await assert.rejects(repo.recordJobIntent('deps', run.revision, 'test', { ...job, contentVersion: 'v2' }), /runnable/i);
-  await assert.rejects(repo.recordStepOutcome('deps', run.revision, { stepID: 'test', inputContentVersion: 'v1', contentVersion: 'v1', evidence: 'claimed' }), /runnable/i);
   run = await repo.recordJobIntent('deps', run.revision, 'test', job);
   assert.equal(run.jobs[0].status, 'pending');
+  await assert.rejects(repo.recordStepOutcome('deps', run.revision, { stepID: 'test', inputContentVersion: 'v1', contentVersion: 'v1', evidence: 'claimed' }), /runnable/i); // a step that has a job cannot also be claimed by an outcome
   const saved = store.records.get('runs/deps') as any; saved.outcomes[0].stepID = 'test';
   await assert.rejects(repo.get('deps'), /outcome/i);
 });
@@ -176,4 +177,18 @@ test('a stop request persists, blocks further work and allows late job exits', a
   run = await repo.recordJobExit('stop', run.revision, 'job', { eventID:'exit', shellID:'sh_1', status:'killed', completedAt:1500, currentContentVersion:'v1' });
   assert.equal(run.jobs[0].status, 'cancelled'); assert.equal(run.stopRequested, true);
   await assert.rejects(repo.startReview('stop', run.revision, {planHash:run.planHash!,diffHash:'v1',validation:{diffHash:'v1',commands:[{command:'test',exitCode:0}]},reviewer:{providerID:'p',id:'m',variant:null,vendor:'review',modelVersion:'v1'},contributingVendors:['coder'],budgetAvailable:true}), /stop requested/i);
+});
+
+test('a foreground command step cannot be skipped before validation, and an outcome and a job cannot both claim one step', async () => {
+  const store = memoryStore(), repo = new RunRepository(store);
+  const implement = step('Implement', 'implement');
+  const migrate = { ...step('Migrate', 'migrate'), inference: false, dependsOn: ['implement'], execution: { kind: 'command' as const, command: 'npm run migrate', deadlineMs: 1000, readyProbe: null } };
+  let run = await repo.create('cmd', 'Requirement', 'base');
+  run = await repo.setPlan('cmd', run.revision, { ...plan, steps: [implement, migrate] });
+  run = await repo.approve('cmd', run.revision, run.planHash!); run = await repo.begin('cmd', run.revision);
+  run = await repo.recordStepOutcome('cmd', run.revision, { stepID: 'implement', inputContentVersion: 'v0', contentVersion: 'v1', evidence: 'done' });
+  await assert.rejects(repo.beginValidation('cmd', run.revision), /outcome is missing/i);
+  run = await repo.recordStepOutcome('cmd', run.revision, { stepID: 'migrate', inputContentVersion: 'v1', contentVersion: 'v1', evidence: 'Command step migrate exited 0' });
+  await assert.rejects(repo.recordJobIntent('cmd', run.revision, 'migrate', { id: 'job', sessionID: 'ses_1', contentVersion: 'v1', now: 1000 }), /runnable/i);
+  run = await repo.beginValidation('cmd', run.revision); assert.equal(run.state, 'validating');
 });

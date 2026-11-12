@@ -70,6 +70,11 @@ export class CasReservationLedger {
     const feature = runID !== null && Object.hasOwn(state.features, runID) ? state.features[runID] : null;
     return { period, monthly: state.monthly, feature, monthlyUsage: summarize(state.reservations.filter(item => item.period === period || item.actual === null), state.monthly), featureUsage: runID === null ? null : summarize(state.reservations.filter(item => item.runID === runID), feature) };
   }
+  /** A run's reservations, so unsettled ones can be reconciled against the provider's own charge records. */
+  async reservations(runID: string) {
+    identity(runID);
+    return (await this.snapshot()).reservations.filter(item => item.runID === runID).map(item => ({ attemptID: item.attemptID, period: item.period, reservedUsd: item.amount, settledUsd: item.actual, evidence: item.evidence }));
+  }
   setLimit(scope: 'monthly' | 'feature', runID: string | undefined, amount: string, revision: number): Promise<Limit> {
     if (scope === 'feature') identity(runID); else if (scope !== 'monthly' || runID !== undefined) throw new Error('Invalid budget scope');
     if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) throw new Error('Invalid budget revision');

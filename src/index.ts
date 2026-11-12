@@ -1,10 +1,16 @@
 import { Plugin } from '@opencode/plugin';
 import type { Session } from '@opencode/schema/session';
 import { createOpenCodeHost } from './host.js';
-import { restrictRoleAction } from './permissions.js';
+import { coderProfile, restrictRoleAction } from './permissions.js';
 import { registerInventory } from './rpc.js';
-import { getSelections } from './settings.js';
+import { getPolicy, getSelections } from './settings.js';
+import { openBudgetLedger } from './budget-ledger.js';
+import { defaultLedgerRoot } from './local-ledger.js';
+import { budgetOpen, createRetryGuard, createSpendGuard } from './spending.js';
 import { listProjectModels } from './inventory.js';
+import { projectRepository } from './drafts.js';
+import { createHostPorts } from './host-ports.js';
+import { createDriver } from './driver.js';
 
 type Role = 'planner' | 'coder' | 'reviewer' | 'unknown';
 const prefix = 'owned-session/';
@@ -66,29 +72,63 @@ export async function createRuntime(context: Plugin.Context) {
       if (!model || !model.enabled || model.status === 'deprecated' || (expected.variant !== undefined && !model.variants.includes(expected.variant))) throw new Error('Stage model is unavailable');
       return adapter.submitStagePrompt(sessionID, runID, promptID, text);
     } };
-    const registration = await context.permission.hook('evaluate', async (event) => {
-      await restrictRoleAction(event, roleFor);
+    const runFor = async (sessionID: string): Promise<string | null> => {
+      const owner = await context.storage.get(`${prefix}${encodeURIComponent(sessionID)}`);
+      return typeof owner === 'string' && owner.trim() ? owner : null;
+    };
+    // Only an atomic store can enforce a budget: the host's own compare-and-set, else a local SQLite file. Without either every owned request is refused.
+    const budget = await openBudgetLedger(context.storage, defaultLedgerRoot());
+    const budgetLedger = budget.ledger;
+    const spendGuard = createSpendGuard({
+      roleFor, runFor,
+      routes: () => getPolicy(context.storage, context.location.directory),
+      limitFor: async model => {
+        const found = (await listProjectModels(context)).find(item => item.providerID === model.providerID && item.id === model.id);
+        return found && found.enabled && found.status !== 'deprecated' ? found.limit : null;
+      },
+      selected: async (role, model) => (await getSelections(context.storage, context.location.directory)).roles[role].some(choice => choice.providerID === model.providerID && choice.id === model.id && choice.variant === (model.variant ?? null)),
+      ledger: () => budgetLedger,
     });
-    let requestGuard;
+    const retryGuard = createRetryGuard(roleFor);
+    const disposers: (() => Promise<void>)[] = [];
+    const dispose = async () => {
+      let failure: unknown;
+      for (const undo of disposers.reverse()) { try { await undo(); } catch (error) { failure ??= error; } }
+      if (failure) throw failure;
+    };
     try {
-      requestGuard = await context.session.hook('experimental.model.resolve', async (event) => {
-        if (await roleFor(event.sessionID) !== null) throw new Error('Feature Pilot spending controls are not ready');
+      disposers.push(async () => budget.close());
+      const permission = await context.permission.hook('evaluate', async (event) => {
+        // A coder gets actions only while the operator has enabled it; any failure to read policy leaves the default deny.
+        let profile: typeof coderProfile | undefined;
+        try { if (await roleFor(event.sessionID) === 'coder' && (await getPolicy(context.storage, context.location.directory)).coderEnabled) profile = coderProfile; } catch { profile = undefined; }
+        await restrictRoleAction(event, roleFor, profile);
       });
+      disposers.push(() => permission.dispose());
+      const resolve = await context.session.hook('experimental.model.resolve', event => spendGuard(event));
+      disposers.push(() => resolve.dispose());
+      const retry = await context.session.hook('retry', event => retryGuard(event));
+      disposers.push(() => retry.dispose());
+      // Built on first use so a plugin that only lists models never touches git or worktrees.
+      let driver: ReturnType<typeof createDriver> | undefined;
+      const runner = { driver: () => driver ??= (() => {
+        const repo = projectRepository(context as never);
+        const ports = createHostPorts({
+          repo, host: host as never, store: context.storage as never, projectDir: context.location.directory,
+          roles: async () => (await getSelections(context.storage, context.location.directory)).roles,
+          policy: () => getPolicy(context.storage, context.location.directory),
+          tools: () => context.tool.list() as never,
+          budget: run => budgetOpen(budgetLedger, run.id),
+        });
+        return createDriver({ repo, ports, host: host as never, store: context.storage as never });
+      })() };
+      const inventory = await registerInventory(context, runner, budget);
+      disposers.push(() => inventory.dispose());
     } catch (error) {
-      await registration.dispose();
+      await dispose().catch(() => undefined);
       throw error;
     }
-    let inventory;
-    try { inventory = await registerInventory(context); }
-    catch (error) {
-      try { await requestGuard.dispose(); } finally { await registration.dispose(); }
-      throw error;
-    }
-    return { host, async dispose() {
-      try { await inventory.dispose(); } finally {
-        try { await requestGuard.dispose(); } finally { await registration.dispose(); }
-      }
-    } }; 
+    return { host, dispose };
 }
 
 export default Plugin.define({

@@ -16,10 +16,12 @@ export function plannerPrompt(run: Run) {
   if (checked.stopRequested || checked.state !== 'planning') throw new Error('Clarification answers or planning state required');
   return { instructions, data: JSON.stringify({ requirement: checked.requirement, baseCommit: checked.baseCommit, answers: checked.clarification }) };
 }
+/** Models often wrap JSON in one Markdown fence. That alone is tolerated; prose around the JSON still fails, and the content is validated strictly afterwards. */
+const unfence = (text: string) => /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(text.trim())?.[1] ?? text;
 /** Accept only a structured proposal; permissions and user approval are separate controls. */
 export function applyPlannerOutput(run: Run, revision: number, text: string): Run {
   if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > 100_000) throw new Error('Planner output is too large');
-  let value: unknown; try { value = JSON.parse(text); } catch { throw new Error('Planner output must be JSON'); }
+  let value: unknown; try { value = JSON.parse(unfence(text)); } catch { throw new Error('Planner output must be JSON'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid planner output');
   const result = value as Record<string, unknown>;
   if (result.kind === 'questions' && objectWithKeys(result, ['kind', 'questions']) && Array.isArray(result.questions) && result.questions.every(q => objectWithKeys(q, ['id', 'question']))) {
@@ -59,7 +61,7 @@ export function reviewerPrompt(run: Run, evidence: { diffHash: string; diff: str
 /** Apply only a bounded, strict review result for the pending plan and diff. */
 export function applyReviewerOutput(run: Run, revision: number, text: string): Run {
   if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > 100_000) throw new Error('Review output is too large');
-  let value: unknown; try { value = JSON.parse(text); } catch { throw new Error('Review output must be JSON'); }
+  let value: unknown; try { value = JSON.parse(unfence(text)); } catch { throw new Error('Review output must be JSON'); }
   if (!objectWithKeys(value, ['planHash', 'diffHash', 'verdict', 'findings']) || !Array.isArray(value.findings) || value.findings.length > 100 || !value.findings.every(item => objectWithKeys(item, ['id', 'severity', 'description', 'evidence']))) throw new Error('Invalid review output');
   return recordReview(run, revision, value as Parameters<typeof recordReview>[2]);
 }

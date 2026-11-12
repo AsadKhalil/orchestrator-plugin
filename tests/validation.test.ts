@@ -1,10 +1,10 @@
 import { step, criterion } from './fixtures/plan-data.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newRun, setPlan, approvePlan, beginImplementation } from '../src/run.js';
+import { newRun, setPlan, approvePlan, beginImplementation, beginValidation, recordStepOutcome } from '../src/run.js';
 import { runApprovedValidation, normalizeShellResult } from '../src/validation.js';
 
-function approved() { let r = newRun('r', 'feature', 'base'); r = setPlan(r, r.revision, { steps: [step('work')], acceptance: [criterion('works')], questions: [], areas: ['src'], rollback: 'Revert changes', validationCommands: ['test', 'lint'] }); r = approvePlan(r, r.revision, r.planHash!); return beginImplementation(r, r.revision); }
+function approved() { let r = newRun('r', 'feature', 'base'); r = setPlan(r, r.revision, { steps: [step('work')], acceptance: [criterion('works')], questions: [], areas: ['src'], rollback: 'Revert changes', validationCommands: ['test', 'lint'] }); r = approvePlan(r, r.revision, r.planHash!); r = beginImplementation(r, r.revision); r = recordStepOutcome(r, r.revision, { stepID: 'work', inputContentVersion: 'base', contentVersion: 'v1', evidence: 'work' }); return beginValidation(r, r.revision); }
 const result = (exit: number, output = 'ok') => ({ output: { output, truncated: false, exit, status: 'completed' }, metadata: { status: 'completed', truncated: false, exit } });
 
 test('accepts only consistent completed native shell results', () => {

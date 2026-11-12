@@ -12,7 +12,8 @@ function repository(context: Context) {
   const root = prefix(context.location.directory);
   return createRunRepository(context, root);
 }
-const summary = (run: Awaited<ReturnType<RunRepository['get']>>) => ({ id: run.id, requirement: run.requirement, baseCommit: run.baseCommit, revision: run.revision, state: run.state, planHash: run.planHash });
+export const projectRepository = repository;
+const summary = (run: Awaited<ReturnType<RunRepository['get']>>) => ({ id: run.id, requirement: run.requirement, baseCommit: run.baseCommit, revision: run.revision, state: run.state, planHash: run.planHash, attention: run.attention?.reason ?? null, stopRequested: run.stopRequested });
 
 /** Capture HEAD as a baseline; this does not snapshot uncommitted files or start a model. */
 export async function createDraft(context: Context, requirement: string) {
@@ -45,10 +46,14 @@ export async function listDrafts(context: Context) {
 }
 
 function detail(run: Awaited<ReturnType<RunRepository['get']>>) {
-  return { ...summary(run), clarification: run.clarification, planJson: run.plan === null ? null : JSON.stringify(run.plan, null, 2) };
+  const reviews = (run.review?.reviews ?? []).map(item => ({ verdict: item.verdict, blocking: item.findings.filter(f => f.severity === 'blocking').length, advisory: item.findings.filter(f => f.severity === 'advisory').length }));
+  return { ...summary(run), clarification: run.clarification, planJson: run.plan === null ? null : JSON.stringify(run.plan, null, 2), approval: run.approval?.type ?? null, reviews };
 }
 export async function getDraft(context: Context, id: string) { return detail(await repository(context).get(id)); }
 export async function answerDraft(context: Context, id: string, revision: number, answers: { id: string; answer: string }[]) { return detail(await repository(context).answerQuestions(id, revision, answers)); }
 export async function approveDraft(context: Context, id: string, revision: number, planHash: string) { return detail(await repository(context).approve(id, revision, planHash)); }
+/** Human decisions on a run record; neither starts a model or a process. */
+export async function acceptDraft(context: Context, id: string, revision: number) { return detail(await repository(context).accept(id, revision)); }
+export async function resumeDraft(context: Context, id: string, revision: number) { return detail(await repository(context).resume(id, revision)); }
 
 export async function exportDraft(context: Context, id: string, revision: number) { const run = await repository(context).get(id); if (run.revision !== revision) throw new Error('Stale run revision'); return exportRunPreview(run); }

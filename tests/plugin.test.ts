@@ -1,4 +1,11 @@
 import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir as osTmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
+// The budget ledger falls back to a file under the data directory; keep tests away from a real one.
+process.env.XDG_DATA_HOME = mkdtempSync(joinPath(osTmpdir(), 'fp-plugin-test-data-'));
+const testDataHome = process.env.XDG_DATA_HOME;
+process.on('exit', () => rmSync(testDataHome, { recursive: true, force: true }));
 import assert from 'node:assert/strict';
 import plugin from '../src/index.js';
 
@@ -102,12 +109,12 @@ test('new stages enter the same permission cache before preparation returns', as
   await runtime.dispose();
 });
 
-test('blocks every owned request kind until spending controls are ready and leaves other sessions untouched', async () => {
+test('refuses every owned request kind without an atomic budget ledger and leaves other sessions untouched', async () => {
   let modelHook: ((event: any) => Promise<void>) | undefined;
   const ctx = {
     storage: { async scan() { return { entries: [{ key: 'owned-session/ses-a', value: 'run-a' }] }; }, async get(key: string) { return key === 'owned-role/ses-a' ? 'planner' : undefined; } },
     permission: { async hook() { return { async dispose() {} }; } },
-    session: { async hook(name: string, callback: (event: any) => Promise<void>) { assert.equal(name, 'experimental.model.resolve'); modelHook = callback; return { async dispose() {} }; } },
+    session: { async hook(name: string, callback: (event: any) => Promise<void>) { if (name === 'experimental.model.resolve') modelHook = callback; else assert.equal(name, 'retry'); return { async dispose() {} }; } },
   };
   const cleanup = await plugin.setup(withSessionHook(ctx) as never);
   assert.ok(modelHook);
@@ -134,7 +141,7 @@ test('rolls back permission and request hooks if inventory RPC registration fail
     rpc: { async register() { throw new Error('RPC failed'); } },
   };
   await assert.rejects(async () => plugin.setup(ctx as never), /RPC failed/);
-  assert.deepEqual(disposed.sort(), ['permission', 'request']);
+  assert.deepEqual(disposed.sort(), ['permission', 'request', 'request']);
 });
 
 test('runtime refuses to prepare a model outside the saved role selection', async () => {
@@ -181,7 +188,7 @@ test('finds sessions created after another runtime initialized using host metada
   const sessions = new Map<string, unknown>(); const permissions: ((event:any)=>Promise<void>)[] = [], requests: ((event:any)=>Promise<void>)[] = [];
   const ctx = { location: { directory: '/repo' }, storage: { async scan() { return { entries: [] }; }, async get(k:string) { return records.get(k); }, async set(k:string,v:unknown) { records.set(k,v); } },
     permission: { async hook(_n:string, cb:(e:any)=>Promise<void>) { permissions.push(cb); return { async dispose() {} }; } },
-    session: { async hook(_n:string, cb:(e:any)=>Promise<void>) { requests.push(cb); return { async dispose() {} }; }, async get({sessionID}:{sessionID:string}) { return sessions.get(sessionID) ?? {}; }, async create(input:any) { sessions.set('ses_owned', {metadata:input.metadata}); return {id:'ses_owned'}; } },
+    session: { async hook(n:string, cb:(e:any)=>Promise<void>) { if (n === 'experimental.model.resolve') requests.push(cb); return { async dispose() {} }; }, async get({sessionID}:{sessionID:string}) { return sessions.get(sessionID) ?? {}; }, async create(input:any) { sessions.set('ses_owned', {metadata:input.metadata}); return {id:'ses_owned'}; } },
     model: { async list() { return { data: [{ providerID:'p', id:'m', name:'M', enabled:true, status:'active', variants:[], capabilities:{input:['text'],output:['text'],tools:true}, limit:{context:100,output:10} }] }; } },
     rpc: { async register() { return { async dispose() {} }; } },
   };
@@ -196,7 +203,7 @@ test('finds sessions created after another runtime initialized using host metada
 
 test('fails closed for an uncached session when host session lookup fails', async () => {
   const { createRuntime } = await import('../src/index.js'); let request: (e:any)=>Promise<void> = async()=>{};
-  const ctx = { storage:{async scan(){return {entries:[]};},async get(){return undefined;}}, permission:{async hook(){return {async dispose(){}};}}, session:{async get(){throw Error('host lookup unavailable');},async hook(_n:string, cb:(e:any)=>Promise<void>){request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}} };
+  const ctx = { storage:{async scan(){return {entries:[]};},async get(){return undefined;}}, permission:{async hook(){return {async dispose(){}};}}, session:{async get(){throw Error('host lookup unavailable');},async hook(n:string, cb:(e:any)=>Promise<void>){if(n==='experimental.model.resolve')request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}} };
   const runtime=await createRuntime(ctx as never);
   await assert.rejects(request({sessionID:'ses_unknown',kind:'primary'}),/lookup unavailable/);
   await runtime.dispose();
@@ -207,7 +214,7 @@ test('recognizes late ownership even when the session metadata was removed', asy
   let permission: (e:any)=>Promise<void> = async()=>{}, request: (e:any)=>Promise<void> = async()=>{};
   const ctx = { storage:{async scan(){return {entries:[]};},async get(k:string){return records.get(k);}},
     permission:{async hook(_n:string, cb:(e:any)=>Promise<void>){permission=cb;return {async dispose(){}};}},
-    session:{async get(){return {metadata:{}};},async hook(_n:string, cb:(e:any)=>Promise<void>){request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}} };
+    session:{async get(){return {metadata:{}};},async hook(n:string, cb:(e:any)=>Promise<void>){if(n==='experimental.model.resolve')request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}} };
   const runtime=await createRuntime(ctx as never);
   records.set('owned-session/ses_late','run'); records.set('owned-role/ses_late','planner');
   const event={sessionID:'ses_late',action:'shell',effect:'allow'};await permission(event);assert.equal(event.effect,'deny');
@@ -218,7 +225,7 @@ test('recognizes late ownership even when the session metadata was removed', asy
 test('uses marked metadata when ownership storage is unavailable', async () => {
   const { createRuntime } = await import('../src/index.js'); let request: (e:any)=>Promise<void> = async()=>{};
   const ctx={storage:{async scan(){return {entries:[]};},async get(){throw Error('storage offline');}},permission:{async hook(){return {async dispose(){}};}},
-    session:{async get({sessionID}:{sessionID:string}){return sessionID==='ses_marked'?{metadata:{featurePilotRunID:'r',featurePilotRole:'planner'}}:{};},async hook(_n:string,cb:(e:any)=>Promise<void>){request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}}};
+    session:{async get({sessionID}:{sessionID:string}){return sessionID==='ses_marked'?{metadata:{featurePilotRunID:'r',featurePilotRole:'planner'}}:{};},async hook(n:string,cb:(e:any)=>Promise<void>){if(n==='experimental.model.resolve')request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}}};
   const runtime=await createRuntime(ctx as never);
   await assert.rejects(request({sessionID:'ses_marked',kind:'primary'}),/spending/i);
   await assert.rejects(request({sessionID:'ses_unknown',kind:'primary'}),/storage offline/i);

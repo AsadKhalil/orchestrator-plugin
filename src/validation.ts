@@ -19,7 +19,7 @@ export function normalizeShellResult(value: unknown): ShellResult {
 /** The host must provide an authorized executor and a reliable whole-worktree diff identity. */
 export async function runApprovedValidation(run: ReturnType<typeof newRun>, input: { diffHash: string; timeoutMs: number; currentDiff(): Promise<string>; execute(command: string, signal: AbortSignal): Promise<unknown> }): Promise<Report> {
   const checked = validateRun(run);
-  if (!['implementing', 'repairing'].includes(checked.state) || !checked.plan) throw new Error('Approved implementation state required');
+  if (checked.state !== 'validating' || !checked.plan) throw new Error('Approved implementation state required');
   if (typeof input.diffHash !== 'string' || !input.diffHash.trim() || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 3_600_000) throw new Error('Invalid validation request');
   const report: Report = { diffHash: input.diffHash, status: 'unknown', commands: [] };
   for (const command of checked.plan.validationCommands) {
@@ -40,4 +40,16 @@ export async function runApprovedValidation(run: ReturnType<typeof newRun>, inpu
     if (result.status !== 'passed') return { ...report, status: result.status };
   }
   return { ...report, status: 'passed' };
+}
+
+/** One approved command run to completion in the foreground, with its own deadline. Anything not clearly completed is 'unknown'. */
+export async function runCommandOnce(command: string, timeoutMs: number, execute: (command: string, signal: AbortSignal) => Promise<unknown>): Promise<Omit<ShellResult, 'status'> & { status: ShellResult['status'] | 'timed_out' }> {
+  const controller = new AbortController(), timedOut = Symbol('timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof timedOut>(resolve => { timer = setTimeout(() => { resolve(timedOut); controller.abort(); }, timeoutMs); });
+  try {
+    const value = await Promise.race([execute(command, controller.signal), deadline]);
+    return value === timedOut ? { status: 'timed_out', exitCode: null, output: '', truncated: false } : normalizeShellResult(value);
+  } catch { return { status: 'unknown', exitCode: null, output: '', truncated: false }; }
+  finally { if (timer) clearTimeout(timer); }
 }
