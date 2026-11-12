@@ -1,0 +1,3 @@
+# Planner recovery across host restart
+
+Run this fixture only in a disposable OpenCode 2.2.7 project with isolated XDG directories and `smoke/model-one#high` pointing at `../planner-handoff/mock-provider.mjs` on loopback. Start the host, initialize the project, wait for `PLANNER_RESTART_PHASE1`, stop the host, and start it again with the same state directories. Initialize the same project and check for `PLANNER_RESTART_PHASE2`. The mock should see one request in total. This deliberately bypasses the production spending guard and uses a synthetic model. It tests a graceful restart after the mock request completed, not a process crash or paid provider.

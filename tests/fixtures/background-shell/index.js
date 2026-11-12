@@ -1,0 +1,31 @@
+import { Plugin } from '@opencode/plugin';
+import { createRunRepository } from '../node_modules/feature-pilot/dist/run-store.js';
+export default Plugin.define({id:'background-shell-probe',async setup(ctx){
+ const controller=new AbortController();const requests=[];
+ const guard=await ctx.session.hook('experimental.model.resolve',async event=>{requests.push({kind:event.kind,sessionID:event.sessionID});throw Error('Synthetic probe blocks inference');});
+ setTimeout(async()=>{try{
+  const session=await ctx.session.create({title:'Background shell probe',agent:'build',permissions:[{action:'shell',resource:'*',effect:'allow'}]});
+  const repo=createRunRepository(ctx);let run=await repo.create('background-'+Date.now(),'Synthetic requirement','synthetic-base');
+  const step={id:'test',description:'Synthetic command',role:'coder',taskKind:'validate',dependsOn:[],resources:{read:['src'],write:[]},inference:false,completion:'Exit 0',execution:{kind:'command',command:'sleep 1; printf background-test',deadlineMs:5000,readyProbe:null}};
+  run=await repo.setPlan(run.id,run.revision,{steps:[step],acceptance:[{id:'a',description:'Completes'}],questions:[],areas:['src'],rollback:'Revert',validationCommands:['sleep 1; printf background-test']});
+  run=await repo.approve(run.id,run.revision,run.planHash);run=await repo.begin(run.id,run.revision);
+  run=await repo.recordJobIntent(run.id,run.revision,'test',{id:'job-1',sessionID:session.id,contentVersion:'synthetic-version',now:Date.now()});
+  const observed=[];let signalReady;const ready=new Promise(resolve=>{signalReady=resolve;});
+  const stream=ctx.event.subscribe({types:['session.shell.started','session.shell.ended','shell.created','shell.exited'],signal:controller.signal,onActivity:()=>signalReady()});
+  const pump=(async()=>{try{for await(const event of stream){if(event.data?.sessionID===session.id || event.type==='shell.created'||event.type==='shell.exited') observed.push({eventID:event.id,created:event.created,type:event.type,sessionID:event.data?.sessionID,shellID:event.data?.shell?.id??event.data?.info?.id??event.data?.id,status:event.data?.shell?.status??event.data?.status,exit:event.data?.shell?.exit??event.data?.exit});}}catch{}})();
+  await Promise.race([ready,new Promise(resolve=>setTimeout(resolve,1000))]);
+  const tool=(await ctx.tool.list()).find(t=>t.id==='shell');
+  const toolContext={sessionID:session.id,agent:'build',messageID:'msg_background_probe',id:'call_background_probe',signal:controller.signal,progress:async()=>{}};
+  const result=await tool.execute({command:'sleep 1; printf background-test',background:true,timeout:5000},toolContext);
+  run=await repo.recordJobHandle(run.id,run.revision,'job-1',result);
+  await new Promise(resolve=>setTimeout(resolve,2000));
+  const ended=observed.find(event=>event.type==='shell.exited'&&event.shellID===run.jobs[0].shellID);
+  if(!ended) throw Error('Missing shell exit event');
+  run=await repo.recordJobExit(run.id,run.revision,'job-1',{eventID:ended.eventID,shellID:ended.shellID,status:ended.status,exit:ended.exit,completedAt:ended.created,currentContentVersion:'synthetic-version'});
+  console.log('BACKGROUND_JOB_RECORD',JSON.stringify({status:run.jobs[0].status,revision:run.revision}));
+  console.log('BACKGROUND_SHELL_RESULT',JSON.stringify({status:result.output?.status,shellID:result.output?.shellID,metadataStatus:result.metadata?.status}));
+  controller.abort();await pump;
+  console.log('BACKGROUND_SHELL_PROBE',JSON.stringify({observed,modelRequests:requests.filter(request=>request.sessionID===session.id).map(request=>request.kind)}));
+ }catch(e){console.log('BACKGROUND_SHELL_ERROR',String(e));controller.abort();}},1500);
+ return async()=>{controller.abort();await guard.dispose();};
+}});

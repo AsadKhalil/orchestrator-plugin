@@ -1,0 +1,2 @@
+import http from 'node:http';
+http.createServer((req,res)=>{req.resume();req.on('end',()=>{console.log('STOP_ACTIVE_REQUEST');res.writeHead(200,{'Content-Type':'text/event-stream'});const base={id:'chatcmpl-stop',object:'chat.completion.chunk',created:1,model:'model-one'};res.write(`data: ${JSON.stringify({...base,choices:[{index:0,delta:{role:'assistant',content:'working'},finish_reason:null}]})}\n\n`);const timer=setTimeout(()=>res.end('data: [DONE]\n\n'),20000);req.on('close',()=>clearTimeout(timer));});}).listen(46790,'127.0.0.1',()=>console.log('STOP_ACTIVE_READY'));

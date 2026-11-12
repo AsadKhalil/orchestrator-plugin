@@ -1,0 +1,3 @@
+import { Plugin } from '@opencode/plugin';
+import { FeaturePilot, registerInventory } from '../node_modules/feature-pilot/dist/rpc.js';
+export default Plugin.define({id:'draft-probe',async setup(ctx){const reg=await registerInventory(ctx);setTimeout(async()=>{try {const rpc=ctx.rpc(FeaturePilot); const created=await rpc.createDraft({requirement:'Synthetic feature'}); const listed=await rpc.listDrafts({});console.log('DRAFT_PROBE',JSON.stringify({state:created.run.state,commitLength:created.run.baseCommit.length,listed:listed.runs.length,match:listed.runs.some(r=>r.id===created.run.id)}));}catch(e){console.log('DRAFT_PROBE_ERROR',String(e));}},500);return ()=>reg.dispose();}});

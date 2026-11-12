@@ -1,0 +1,2 @@
+export const step = (description: string, id = description.toLowerCase().replace(/[^a-z0-9]+/g, '-')) => ({ id, description, role: 'coder' as const, taskKind: 'implement' as const, dependsOn: [] as string[], resources: null, inference: true, completion: 'Completed', execution: null });
+export const criterion = (description: string, id = description.toLowerCase().replace(/[^a-z0-9]+/g, '-')) => ({ id, description });

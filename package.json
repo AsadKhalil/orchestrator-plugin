@@ -1,0 +1,33 @@
+{
+  "name": "feature-pilot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && vite build",
+    "smoke:worktree": "node scripts/smoke-worktree.mjs"
+  },
+  "dependencies": {
+    "@opencode/client": "2.2.7",
+    "@opencode/plugin": "2.2.7",
+    "@opencode/schema": "2.2.7",
+    "effect": "4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "solid-js": "^1.9.17",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.7",
+    "vite-plugin-solid": "^2.11.10"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,3 @@
+# Background shell stop probe
+
+Run only in an isolated OpenCode 2.2.7 project. The fixture executes the bounded synthetic command `sleep 30` and reports its shell ID after attempting to interrupt its session. An external client connected to the same isolated server can call `shell.get` and `shell.remove` with that ID and the project location; verify the reported PID before and after removal. Stop the disposable host afterward. The fixture's model-resolution hook blocks inference. This test does not exercise a real feature, process descendants, output preservation, races or permissions beyond its synthetic session.

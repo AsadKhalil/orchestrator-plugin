@@ -1,0 +1,3 @@
+# Cross-process ownership probe
+
+Use only two disposable OpenCode 2.2.7 servers sharing fresh isolated XDG directories and one disposable project. Configure `smoke/model-one#high` to use `../planner-handoff/mock-provider.mjs` on loopback. Start the watcher with `FEATURE_PILOT_PROBE_ROLE=watcher` and initialize the project before initializing the creator with `FEATURE_PILOT_PROBE_ROLE=creator`. The creator creates a synthetic unmarked session and ownership records; the watcher should deny edit and the synthetic model request. The mock must observe no request. Use a freshly initialized host database before starting the second server to avoid a concurrent first-run migration race. This is one same-machine test and does not prove transactional storage or other transports.
