@@ -7,7 +7,11 @@
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && vite build",
-    "smoke:worktree": "node scripts/smoke-worktree.mjs"
+    "smoke:worktree": "node scripts/smoke-worktree.mjs",
+    "smoke:host": "node scripts/smoke-host.mjs",
+    "smoke:host:model": "node scripts/smoke-host-model.mjs",
+    "measure": "tsx scripts/measure-workflow.ts",
+    "check:prices": "tsx scripts/check-prices.ts"
   },
   "dependencies": {
     "@opencode/client": "2.2.7",

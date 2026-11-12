@@ -220,3 +220,17 @@ test('uses atomic prompt claims and never dispatches after a competing claim', a
   await assert.rejects(host.submitStagePrompt('owned', 'run', 'msg_claim', 'hello'), /already recorded/i);
   assert.equal(sends, 0); assert.equal(fallback, 0);
 });
+
+test('only a coder stage can be placed in a worktree, and its allow rules follow the deny-all rule', async () => {
+  const calls: any[] = [];
+  const host = createHost({ session: { async create(input) { calls.push(input); return { id: 'owned-coder' }; } }, storage, listModels: models });
+  const model = { providerID: 'p', id: 'm' };
+  await assert.rejects(host.prepareStage({ runID: 'r', role: 'planner', model, work: { directory: '/wt', allow: ['edit'] } }), /only a coder/i);
+  await assert.rejects(host.prepareStage({ runID: 'r', role: 'reviewer', model, work: { directory: '/wt', allow: ['edit'] } }), /only a coder/i);
+  await assert.rejects(host.prepareStage({ runID: 'r', role: 'coder', model, work: { directory: ' ', allow: ['edit'] } }), /only a coder/i);
+  await assert.rejects(host.prepareStage({ runID: 'r', role: 'coder', model, work: { directory: '/wt', allow: [] } }), /only a coder/i);
+  assert.equal(calls.length, 0, 'nothing was created for a refused request');
+  assert.equal(await host.prepareStage({ runID: 'r', role: 'coder', model, work: { directory: '/wt', allow: ['read', 'edit'] } }), 'owned-coder');
+  assert.deepEqual(calls[0].permissions, [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }, { action: 'edit', resource: '*', effect: 'allow' }]);
+  assert.deepEqual(calls[0].location, { directory: '/wt' });
+});

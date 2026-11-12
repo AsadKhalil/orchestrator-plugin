@@ -49,8 +49,27 @@ test('saves the committed baseline and scopes draft discovery to the current pro
     const plan = await getDraft(ctxA as never, draft.id); assert.match(plan.planJson!, /Implement/);
     await assert.rejects(approveDraft(ctxA as never, draft.id, plan.revision, 'wrong'), /hash/i);
     const approved = await approveDraft(ctxA as never, draft.id, plan.revision, plan.planHash!);
-    assert.equal(approved.state, 'approved');
+    assert.equal(approved.state, 'implementing');
     await assert.rejects(approveDraft(ctxA as never, draft.id, plan.revision, plan.planHash!), /revision/i);
 
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a reviewed run is accepted only by an explicit call, and a paused run resumes to its checkpoint', async () => {
+  const { newRun, setPlan, approvePlan, beginImplementation, beginValidation, recordStepOutcome, startReview, recordReview, markNeedsAttention } = await import('../src/run.js');
+  const { acceptDraft, resumeDraft } = await import('../src/drafts.js');
+  const id = '00000000-0000-4000-8000-000000000002', data = new Map<string, unknown>(), key = `project-runs/${encodeURIComponent('/project')}/runs/${id}`;
+  const context = { location: { directory: '/project' }, storage: { async get(k: string) { return structuredClone(data.get(k)); }, async set(k: string, v: unknown) { data.set(k, structuredClone(v)); } } } as never;
+  let run = newRun(id, 'Feature', 'base'); run = setPlan(run, run.revision, { steps: [step('Implement')], acceptance: [criterion('Works')], questions: [], areas: ['src'], rollback: 'revert', validationCommands: ['test'] });
+  run = approvePlan(run, run.revision, run.planHash!); run = beginImplementation(run, run.revision);
+  run = recordStepOutcome(run, run.revision, { stepID: 'implement', inputContentVersion: 'base', contentVersion: 'tree:1', evidence: 'done' }); run = beginValidation(run, run.revision);
+  const paused = markNeedsAttention(run, run.revision, 'budget_exhausted'); data.set(key, paused);
+  await assert.rejects(acceptDraft(context, id, paused.revision), /not ready/i);
+  const resumed = await resumeDraft(context, id, paused.revision); assert.equal(resumed.state, 'validating');
+  await assert.rejects(resumeDraft(context, id, paused.revision), /stale/i);
+  let reviewed = startReview(run, run.revision, { planHash: run.planHash!, diffHash: 'tree:1', validation: { diffHash: 'tree:1', commands: [{ command: 'test', exitCode: 0 }] }, reviewer: { providerID: 'p', id: 'r', variant: null, vendor: 'review', modelVersion: '1' }, contributingVendors: ['coder'], budgetAvailable: true });
+  reviewed = recordReview(reviewed, reviewed.revision, { planHash: run.planHash!, diffHash: 'tree:1', verdict: 'approve', findings: [] }); data.set(key, reviewed);
+  assert.equal(reviewed.state, 'ready_for_acceptance');
+  assert.equal((await acceptDraft(context, id, reviewed.revision)).state, 'accepted');
+  await assert.rejects(acceptDraft(context, id, reviewed.revision + 1), /stale|not ready/i);
 });

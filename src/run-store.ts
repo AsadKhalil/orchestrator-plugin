@@ -1,5 +1,5 @@
 import { applyPlannerOutput, applyReviewerOutput } from './prompts.js';
-import { newRun, setPlan, approvePlan, beginImplementation, updateRequirement, validateRun, startReview, recordReview, acceptRun, askQuestions, answerQuestions, recordJobIntent, recordJobHandle, recordJobExit, recordJobReady, recordJobDeadline, recordStepOutcome, requestStop } from './run.js';
+import { newRun, setPlan, approvePlan, beginImplementation, updateRequirement, validateRun, startReview, recordReview, acceptRun, askQuestions, answerQuestions, recordJobIntent, recordJobHandle, recordJobExit, recordJobReady, recordJobDeadline, recordStepOutcome, requestStop, beginValidation, markNeedsAttention, resumeRun, finishStop, requestAmendment } from './run.js';
 
 type Run = ReturnType<typeof newRun>;
 type Plan = Parameters<typeof setPlan>[2];
@@ -61,10 +61,15 @@ export class RunRepository {
   askQuestions(id: string, revision: number, questions: Parameters<typeof askQuestions>[2]): Promise<Run> { return this.update(id, run => askQuestions(run, revision, questions)); }
   answerQuestions(id: string, revision: number, answers: Parameters<typeof answerQuestions>[2]): Promise<Run> { return this.update(id, run => answerQuestions(run, revision, answers)); }
   setPlan(id: string, revision: number, plan: Plan): Promise<Run> { return this.update(id, run => setPlan(run, revision, plan)); }
-  approve(id: string, revision: number, hash: string): Promise<Run> { return this.update(id, run => approvePlan(run, revision, hash)); }
+  approve(id: string, revision: number, hash: string, approver: 'human' | 'autonomous' = 'human'): Promise<Run> { return this.update(id, run => approvePlan(run, revision, hash, approver)); }
   changeRequirement(id: string, revision: number, requirement: string): Promise<Run> { return this.update(id, run => updateRequirement(run, revision, requirement)); }
   requestStop(id: string, revision: number): Promise<Run> { return this.update(id, run => requestStop(run, revision)); }
   begin(id: string, revision: number): Promise<Run> { return this.update(id, run => beginImplementation(run, revision)); }
+  beginValidation(id: string, revision: number): Promise<Run> { return this.update(id, run => beginValidation(run, revision)); }
+  needsAttention(id: string, revision: number, reason: string): Promise<Run> { return this.update(id, run => markNeedsAttention(run, revision, reason)); }
+  resume(id: string, revision: number): Promise<Run> { return this.update(id, run => resumeRun(run, revision)); }
+  finishStop(id: string, revision: number): Promise<Run> { return this.update(id, run => finishStop(run, revision)); }
+  amend(id: string, revision: number, reason: string): Promise<Run> { return this.update(id, run => requestAmendment(run, revision, reason)); }
   recordStepOutcome(id: string, revision: number, outcome: Parameters<typeof recordStepOutcome>[2]): Promise<Run> { return this.update(id, run => recordStepOutcome(run, revision, outcome)); }
   recordJobIntent(id: string, revision: number, stepID: string, input: Parameters<typeof recordJobIntent>[3]): Promise<Run> { return this.update(id, run => recordJobIntent(run, revision, stepID, input)); }
   recordJobHandle(id: string, revision: number, jobID: string, result: unknown): Promise<Run> { return this.update(id, run => recordJobHandle(run, revision, jobID, result)); }

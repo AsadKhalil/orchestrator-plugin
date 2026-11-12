@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 
 /** A stage is prepared with all tools denied until host permissions are verified. */
 type ModelRef = { providerID: string; id: string; variant?: string };
-type Stage = { runID: string; role: 'planner' | 'coder' | 'reviewer'; model: ModelRef };
+type Stage = { runID: string; role: 'planner' | 'coder' | 'reviewer'; model: ModelRef; /** Coder only: run the session in this worktree with these actions allowed. */ work?: { directory: string; allow: readonly string[] } };
 type CreateInput = {
   title: string;
   model: ModelRef;
   metadata: { featurePilotRunID: string; featurePilotRole: Stage['role'] };
-  permissions: { action: string; resource: string; effect: 'deny' }[];
+  permissions: { action: string; resource: string; effect: 'allow' | 'deny' }[];
+  location?: { directory: string };
 };
 
 type InventoryModel = { providerID: string; id: string; enabled: boolean; status: string; variants: readonly string[] };
@@ -31,11 +32,16 @@ export function createHost(context: HostContext, onOwned?: (id: string, role: St
       const model = models.find(item => item.providerID === stage.model.providerID && item.id === stage.model.id);
       if (!model || !model.enabled || model.status === 'deprecated') throw new Error('Selected model is unavailable');
       if (stage.model.variant !== undefined && !model.variants.includes(stage.model.variant)) throw new Error('Selected model variant is unavailable');
+      if (stage.work && (stage.role !== 'coder' || !stage.work.directory.trim() || !stage.work.allow.length)) throw new Error('Only a coder stage can be given a worktree and permissions');
       const session = await context.session.create({
         title: `Feature Pilot: ${stage.role}`,
         model: stage.model,
         metadata: { featurePilotRunID: stage.runID, featurePilotRole: stage.role },
-        permissions: [{ action: '*', resource: '*', effect: 'deny' }],
+        // Allow rules are deliberately `resource: '*'`: a shell rule's resource is the command text, not a path, and how 2.2.7 matches file-path
+        // patterns is unverified, so a guessed path scope could silently deny everything or give false assurance. The worktree separates the
+        // checkout only; it is not a sandbox. The coder stays off unless the operator enables it (see docs/compatibility.md).
+        permissions: [{ action: '*', resource: '*', effect: 'deny' }, ...(stage.work?.allow ?? []).map(action => ({ action, resource: '*', effect: 'allow' as const }))],
+        ...(stage.work ? { location: { directory: stage.work.directory } } : {}),
       });
       if (!session.id) throw new Error('Host returned an empty session ID');
       // If this fails, no prompt has been sent; the orphan is never treated as owned.

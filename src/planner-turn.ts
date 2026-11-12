@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { RunRepository } from './run-store.js';
 import type { createOpenCodeHost } from './host.js';
 import { plannerPrompt } from './prompts.js';
@@ -6,14 +6,17 @@ import { savePlannerReply } from './planner-handoff.js';
 
 type Host = Pick<ReturnType<typeof createOpenCodeHost>, 'prepareStage' | 'submitStagePrompt' | 'waitStage' | 'ownsPrompt' | 'roleForSession' | 'stageModels' | 'readStage'>;
 type Store = { get(key: string): Promise<unknown>; set(key: string, value: string): Promise<void>; compareAndSet?(key: string, expected: unknown, value: string): Promise<boolean> };
-type Checkpoint = { runID: string; revision: number; phase: 'creating' | 'prepared' | 'dispatching' | 'submitted' | 'complete'; sessionID: string | null; promptID: string | null };
+/** `inputHash` fingerprints the planner prompt data, so a pause/resume (which only bumps the revision) does not invalidate an in-flight turn. */
+type Checkpoint = { runID: string; revision: number; phase: 'creating' | 'prepared' | 'dispatching' | 'submitted' | 'complete'; sessionID: string | null; promptID: string | null; inputHash?: string };
+const abandoned = 'abandoned';
+const fingerprint = (data: string) => createHash('sha256').update(data).digest('hex');
 const key = (runID: string) => `planner-turn/${encodeURIComponent(runID)}`;
 // shortcut: this queue is process-local; use host-wide transactions before enabling dispatch.
 let queue: Promise<void> = Promise.resolve();
 const active = new Set<string>();
 function serial<T>(fn: () => Promise<T>): Promise<T> { const next = queue.then(fn); queue = next.then(() => undefined, () => undefined); return next; }
 function parse(value: unknown, runID: string): Checkpoint | null {
-  if (value === undefined) return null;
+  if (value === undefined || value === abandoned) return null;
   if (typeof value !== 'string') throw new Error('Invalid planner checkpoint');
   let item: Checkpoint; try { item = JSON.parse(value); } catch { throw new Error('Invalid planner checkpoint'); }
   if (!item || item.runID !== runID || !Number.isSafeInteger(item.revision) || item.revision < 0 || !['creating', 'prepared', 'dispatching', 'submitted', 'complete'].includes(item.phase) || !(item.sessionID === null || typeof item.sessionID === 'string' && !!item.sessionID.trim()) || !(item.promptID === null || typeof item.promptID === 'string' && item.promptID.startsWith('msg_'))) throw new Error('Invalid planner checkpoint');
@@ -36,7 +39,7 @@ export async function startPlannerTurn(repo: RunRepository, host: Host, store: S
   const run = await repo.get(input.runID);
   if (run.revision !== input.revision) throw new Error('Stale planning revision');
   const prompt = plannerPrompt(run), storageKey = key(input.runID);
-  let checkpoint: Checkpoint = { runID: input.runID, revision: input.revision, phase: 'creating', sessionID: null, promptID: null };
+  let checkpoint: Checkpoint = { runID: input.runID, revision: input.revision, phase: 'creating', sessionID: null, promptID: null, inputHash: fingerprint(prompt.data) };
   let saved: unknown;
   await serial(async () => {
     const previous = await store.get(storageKey), prior = parse(previous, input.runID);
@@ -69,11 +72,27 @@ export async function reconcilePlannerTurn(repo: RunRepository, host: Host, stor
     if (checkpoint.phase === 'complete') return { status: 'complete' as const };
     if (!['dispatching', 'submitted'].includes(checkpoint.phase) || !checkpoint.sessionID || !checkpoint.promptID) return { status: 'needs_attention' as const, reason: 'dispatch_not_confirmed' };
     const run = await repo.get(runID);
-    if (run.revision !== checkpoint.revision || run.state !== 'planning') return { status: 'needs_attention' as const, reason: 'run_changed' };
+    // Same planner input means same turn, even if the run was paused and resumed since (each bumps the revision).
+    const sameInput = checkpoint.inputHash === undefined ? run.revision === checkpoint.revision : fingerprint(plannerPrompt(run).data) === checkpoint.inputHash;
+    if (!sameInput || run.state !== 'planning') return { status: 'needs_attention' as const, reason: 'run_changed' };
     const result = await host.readStage(checkpoint.sessionID, runID);
     if (result.outcome !== 'succeeded') return { status: 'needs_attention' as const, reason: result.outcome === 'failed' || result.outcome === 'interrupted' ? 'session_failed' : 'session_unresolved' };
-    const updated = await savePlannerReply(repo, host, { runID, revision: checkpoint.revision, sessionID: checkpoint.sessionID, promptID: checkpoint.promptID });
+    const updated = await savePlannerReply(repo, host, { runID, revision: run.revision, sessionID: checkpoint.sessionID, promptID: checkpoint.promptID });
     await replace(store, key(runID), raw, { ...checkpoint, phase: 'complete' });
     return { status: 'recovered' as const, run: updated };
+  });
+}
+
+/**
+ * Give up an unfinished turn so a fresh one can start. The caller decides this is acceptable (nothing was sent, or the turn failed or
+ * produced nothing usable); the old session is not touched. Refused while this process is still running that turn.
+ */
+export async function abandonPlannerTurn(store: Store, runID: string) {
+  return serial(async () => {
+    if (active.has(key(runID))) throw new Error('Planner turn is still running');
+    const raw = await store.get(key(runID)), checkpoint = parse(raw, runID);
+    if (!checkpoint || checkpoint.phase === 'complete') return;
+    if (typeof store.compareAndSet === 'function') { const done = await store.compareAndSet(key(runID), raw, abandoned); if (done !== true) throw new Error('Planner checkpoint changed; reconciliation required'); }
+    else await store.set(key(runID), abandoned);
   });
 }

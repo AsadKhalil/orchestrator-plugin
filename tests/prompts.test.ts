@@ -44,7 +44,7 @@ test('applies planner output through the durable revision-checked repository', a
 });
 
 test('coder receives approved plan, assigned step and only blocking repair findings', async () => {
-  const { setPlan, approvePlan, beginImplementation, recordStepOutcome, startReview, recordReview } = await import('../src/run.js');
+  const { setPlan, approvePlan, beginImplementation, beginValidation, recordStepOutcome, startReview, recordReview } = await import('../src/run.js');
   const { coderPrompt } = await import('../src/prompts.js');
   let run = newRun('r', 'Implement login', 'base');
   assert.throws(() => coderPrompt(run, 'implement'), /approved/i);
@@ -52,7 +52,7 @@ test('coder receives approved plan, assigned step and only blocking repair findi
   run = approvePlan(run,run.revision,run.planHash!); run = beginImplementation(run,run.revision);
   assert.throws(() => coderPrompt(run,'missing'), /step/i);
   assert.equal(JSON.parse(coderPrompt(run,'implement').data).requirement,'Implement login');
-  run = recordStepOutcome(run,run.revision,{stepID:'implement',inputContentVersion:'base',contentVersion:'diff',evidence:'done'});
+  run = recordStepOutcome(run,run.revision,{stepID:'implement',inputContentVersion:'base',contentVersion:'diff',evidence:'done'}); run = beginValidation(run,run.revision);
   run = startReview(run,run.revision,{planHash:run.planHash!,diffHash:'diff',validation:{diffHash:'diff',commands:[{command:'test',exitCode:0}]},reviewer:{providerID:'p',id:'m',variant:null,vendor:'review',modelVersion:'v1'},contributingVendors:['coder'],budgetAvailable:true});
   run = recordReview(run,run.revision,{planHash:run.planHash!,diffHash:'diff',verdict:'request_changes',findings:[{id:'b',severity:'blocking',description:'Broken',evidence:'Failure'},{id:'a',severity:'advisory',description:'Style',evidence:'Optional'}]});
   const data = JSON.parse(coderPrompt(run,'implement').data);
@@ -61,10 +61,10 @@ test('coder receives approved plan, assigned step and only blocking repair findi
 });
 
 test('review prompt binds artifacts and only accepts a matching strict review result', async () => {
-  const { setPlan, approvePlan, beginImplementation, recordStepOutcome, startReview } = await import('../src/run.js');
+  const { setPlan, approvePlan, beginImplementation, beginValidation, recordStepOutcome, startReview } = await import('../src/run.js');
   const { reviewerPrompt, applyReviewerOutput } = await import('../src/prompts.js');
   let run = newRun('r','Feature','base');run=setPlan(run,run.revision,{steps:[step('Implement')],acceptance:[criterion('Works')],questions:[],areas:['src'],rollback:'Revert',validationCommands:['test']});
-  run=approvePlan(run,run.revision,run.planHash!);run=beginImplementation(run,run.revision);run=recordStepOutcome(run,run.revision,{stepID:'implement',inputContentVersion:'base',contentVersion:'d',evidence:'done'});
+  run=approvePlan(run,run.revision,run.planHash!);run=beginImplementation(run,run.revision);run=recordStepOutcome(run,run.revision,{stepID:'implement',inputContentVersion:'base',contentVersion:'d',evidence:'done'});run=beginValidation(run,run.revision);
   run=startReview(run,run.revision,{planHash:run.planHash!,diffHash:'d',validation:{diffHash:'d',commands:[{command:'test',exitCode:0}]},reviewer:{providerID:'p',id:'m',variant:null,vendor:'review',modelVersion:'v1'},contributingVendors:['coder'],budgetAvailable:true});
   assert.throws(()=>reviewerPrompt(run,{diffHash:'other',diff:'patch',context:[]}),/matching/i);
   const data=JSON.parse(reviewerPrompt(run,{diffHash:'d',diff:'patch',context:[{path:'src/a',content:'code'}]}).data);
@@ -74,4 +74,22 @@ test('review prompt binds artifacts and only accepts a matching strict review re
   assert.throws(()=>applyReviewerOutput(run,run.revision,JSON.stringify({...result,extra:true})),/invalid/i);
   assert.throws(()=>applyReviewerOutput(run,run.revision,JSON.stringify({...result,findings:[{id:'b',severity:'blocking',description:'Broken',evidence:'Fails'}]})),/verdict/i);
   assert.equal(applyReviewerOutput(run,run.revision,JSON.stringify(result)).state,'ready_for_acceptance');
+});
+
+test('a reply wrapped in a single Markdown fence is accepted, but prose around the JSON still is not', async () => {
+  const { setPlan, approvePlan, beginImplementation, beginValidation, recordStepOutcome, startReview } = await import('../src/run.js');
+  const { applyReviewerOutput } = await import('../src/prompts.js');
+  let planning = newRun('p', 'Feature', 'base');
+  const proposal = { kind: 'questions', questions: [{ id: 'q1', question: 'Which provider?' }] };
+  const fencedPlanner = '```json\n' + JSON.stringify(proposal) + '\n```';
+  const asked = applyPlannerOutput(planning, planning.revision, fencedPlanner);
+  assert.equal(asked.state, 'clarifying'); assert.equal(asked.clarification[0].question, 'Which provider?');
+  assert.throws(() => applyPlannerOutput(planning, planning.revision, 'Here is the plan:\n' + fencedPlanner), /JSON/i);
+  assert.throws(() => applyPlannerOutput(planning, planning.revision, fencedPlanner + '\nHope that helps'), /JSON/i);
+  let run = newRun('r', 'Feature', 'base'); run = setPlan(run, run.revision, { steps: [step('Implement')], acceptance: [criterion('Works')], questions: [], areas: ['src'], rollback: 'Revert', validationCommands: ['test'] });
+  run = approvePlan(run, run.revision, run.planHash!); run = beginImplementation(run, run.revision); run = recordStepOutcome(run, run.revision, { stepID: 'implement', inputContentVersion: 'base', contentVersion: 'd', evidence: 'done' }); run = beginValidation(run, run.revision);
+  run = startReview(run, run.revision, { planHash: run.planHash!, diffHash: 'd', validation: { diffHash: 'd', commands: [{ command: 'test', exitCode: 0 }] }, reviewer: { providerID: 'p', id: 'm', variant: null, vendor: 'review', modelVersion: 'v1' }, contributingVendors: ['coder'], budgetAvailable: true });
+  const verdict = JSON.stringify({ planHash: run.planHash!, diffHash: 'd', verdict: 'approve', findings: [] });
+  assert.equal(applyReviewerOutput(run, run.revision, '```\n' + verdict + '\n```').state, 'ready_for_acceptance');
+  assert.throws(() => applyReviewerOutput(run, run.revision, 'Looks good.\n```json\n' + verdict + '\n```'), /JSON/i);
 });
