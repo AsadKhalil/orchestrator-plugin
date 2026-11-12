@@ -79,4 +79,4 @@ export function harness(f: Fixture, script: { authenticated?: boolean; createFai
 }
 export type Harness = ReturnType<typeof harness>;
 export const target = (f: Fixture, over: Partial<Extract<Destination, { kind: 'github' }>> = {}): Destination => ({ kind: 'github', remote: 'origin', remoteURL: f.remote, baseBranch: 'main', branchPrefix: 'feature-pilot/', ...over });
-export const deps = (f: Fixture, h: Harness, extra: Partial<DeliveryDeps> = {}): DeliveryDeps => ({ exec: h.exec, worktree: f.dir, publicationEnabled: true, previous: null, record: async r => { h.state.events.push(`record:${r.phase}`); h.state.records.push(structuredClone(r)); }, ...extra });
+export const deps = (f: Fixture, h: Harness, extra: Partial<DeliveryDeps> = {}): DeliveryDeps => ({ exec: h.exec, worktree: f.dir, publicationEnabled: true, repoOf: () => 'github.com/example/widgets', previous: null, record: async r => { h.state.events.push(`record:${r.phase}`); h.state.records.push(structuredClone(r)); }, ...extra });

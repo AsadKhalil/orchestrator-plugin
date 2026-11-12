@@ -15,7 +15,7 @@ async function setup(options: { enable?: boolean; accept?: boolean } = {}) {
   const run: Run = options.accept === false ? reviewed : acceptRun(reviewed, reviewed.revision);
   await store.set(worktreeKey(run.id), f.dir);
   if (options.enable !== false) await saveDelivery(store as never, f.dir, 0, { publicationEnabled: true, github: github(f) });
-  const env = { directory: f.dir, store, repo: { get: async () => run }, exec: h.exec };
+  const env = { directory: f.dir, store, repo: { get: async () => run }, exec: h.exec, repoOf: () => 'github.com/example/widgets' };
   return { f, store, h, run, env, done: f.done };
 }
 const gh = (h: ReturnType<typeof harness>) => h.state.calls.filter(call => call.file === 'gh');

@@ -6,7 +6,7 @@ import { worktreeKey } from './host-ports.js';
 import { defaultExec, type Exec } from './worktree.js';
 
 type Store = { get(key: string): Promise<unknown>; set(key: string, value: string): Promise<void> };
-export type DeliverEnv = { directory: string; store: Store; repo: Pick<RunRepository, 'get'>; exec?: Exec };
+export type DeliverEnv = { directory: string; store: Store; repo: Pick<RunRepository, 'get'>; exec?: Exec; repoOf?: (remoteURL: string) => string | null };
 export type Delivered = { status: 'exported' | 'delivered' | 'needs_attention' | 'refused'; reason: string | null; paths: string[]; branch: string | null; commit: string | null; prUrl: string | null; reusedPR: boolean | null };
 
 export const deliveryRecordKey = (runID: string) => `run-delivery/${encodeURIComponent(runID)}`;
@@ -43,7 +43,7 @@ export async function deliverDraft(env: DeliverEnv, id: string, revision: number
     if (typeof worktree !== 'string' || !worktree) return { ...empty, reason: 'This run has no worktree to publish from' };
     let previous: DeliveryRecord | null;
     try { previous = readRecord(await env.store.get(deliveryRecordKey(run.id))); } catch { return { ...empty, status: 'needs_attention', reason: 'The saved delivery record is unreadable; check the branch and pull request by hand' }; }
-    const result = await deliverRun(run, { kind: 'github', ...settings.github }, { exec: env.exec ?? defaultExec, worktree, publicationEnabled: true, previous, record: async record => { await env.store.set(deliveryRecordKey(run.id), JSON.stringify(record)); } });
+    const result = await deliverRun(run, { kind: 'github', ...settings.github }, { exec: env.exec ?? defaultExec, worktree, publicationEnabled: true, repoOf: env.repoOf, previous, record: async record => { await env.store.set(deliveryRecordKey(run.id), JSON.stringify(record)); } });
     if (result.status === 'delivered') return { ...empty, status: 'delivered', branch: result.branch, commit: result.commit, prUrl: result.prUrl, reusedPR: result.reusedPR };
     if (result.status === 'needs_attention') return { ...empty, status: 'needs_attention', reason: result.reason, branch: result.record?.branch ?? null, commit: result.record?.commit ?? null, prUrl: result.record?.prUrl ?? null };
     return { ...empty, status: 'refused', reason: result.status === 'refused' ? result.reason : 'Delivery failed' };

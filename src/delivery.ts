@@ -146,7 +146,15 @@ export type DeliveryDeps = {
   record: (record: DeliveryRecord) => Promise<void>;
   previous: DeliveryRecord | null;
   costs?: Costs;
+  /** The `[HOST/]OWNER/REPO` a pull request is pinned to, taken from the authorized URL. Defaults to `githubRepo`. */
+  repoOf?: (remoteURL: string) => string | null;
 };
+
+/** `HOST/OWNER/REPO` from an https, ssh or scp-style GitHub URL; null for anything else (a local path, extra path segments, a port). */
+export function githubRepo(url: string): string | null {
+  const match = /^(?:https:\/\/|ssh:\/\/git@|git@)([A-Za-z0-9.-]+)[/:]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(url);
+  return match ? `${match[1]}/${match[2]}/${match[3]}` : null;
+}
 
 const safe = (error: unknown) => String(error instanceof Error ? error.message : error).replace(/\/\/[^/@\s]*@/g, '//***@').replace(/\s+/g, ' ').slice(0, 300);
 export const plainName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) && !/\.\.|\/\/|\/\.|[./]$|\.lock$/.test(name);
@@ -189,8 +197,14 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
   const git = tool('git', 30_000), push = tool('git', 120_000), gh = tool('gh', 60_000);
   const line = async (...args: string[]) => (await git(...args)).trim();
 
-  try { if (await line('remote', 'get-url', remote) !== remoteURL) return refused('The configured remote does not match the authorized destination'); }
+  // `git push <remote>` follows `remote.<name>.pushurl` and `pushInsteadOf`, which a plain `get-url` does not show, so every fetch and push URL must be the authorized one.
+  let urls: string[];
+  try { urls = [...(await line('remote', 'get-url', '--all', remote)).split(/\r?\n/), ...(await line('remote', 'get-url', '--push', '--all', remote)).split(/\r?\n/)]; }
   catch { return refused('The remote is not configured in this worktree'); }
+  if (urls.some(url => url !== remoteURL)) return refused('The configured remote does not match the authorized destination');
+  // `gh` otherwise picks the repository from the worktree's remotes (or a stored default), which may not be the authorized one.
+  const repo = (deps.repoOf ?? githubRepo)(remoteURL);
+  if (!repo) return refused('The authorized URL does not name a GitHub repository, so the pull request destination cannot be pinned');
   let files: string[];
   try {
     const identity = await (deps.identity ?? (directory => contentIdentity(directory, deps.exec)))(deps.worktree);
@@ -222,7 +236,7 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
 
     try { await gh('auth', 'status'); } catch (error) { return attention(`GitHub CLI credentials are missing or invalid: ${safe(error)}`); }
     step = 'gh pr list';
-    const existing = parsePullRequests(await gh('pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,url,headRefOid'));
+    const existing = parsePullRequests(await gh('pr', 'list', '--repo', repo, '--head', branch, '--state', 'all', '--json', 'number,url,headRefOid'));
     if (existing.length) {
       const match = existing.find(item => item.headRefOid === local);
       if (!local || !match) return attention('A pull request for this run branch exists but does not match the local delivery commit');
@@ -252,7 +266,7 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
     try {
       const bodyFile = join(scratch, 'body.md');
       await writeFile(bodyFile, buildPullRequestBody(run, deps.costs ?? null, files), { mode: 0o600 });
-      output = await gh('pr', 'create', '--draft', '--base', baseBranch, '--head', branch, '--title', title, '--body-file', bodyFile);
+      output = await gh('pr', 'create', '--repo', repo, '--draft', '--base', baseBranch, '--head', branch, '--title', title, '--body-file', bodyFile);
     } finally { await rm(scratch, { recursive: true, force: true }); }
     const prUrl = output.trim().split(/\r?\n/).pop() ?? '';
     if (!/^https:\/\/\S+$/.test(prUrl)) return attention('The pull request may have been created but its URL could not be read; a retry will look it up');

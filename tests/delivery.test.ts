@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { exportRunPreview, exportRun, deliverRun, buildPullRequestBody, type DeliveryDeps, type DeliveryRecord } from '../src/delivery.js';
+import { exportRunPreview, exportRun, deliverRun, githubRepo, buildPullRequestBody, type DeliveryDeps, type DeliveryRecord } from '../src/delivery.js';
 import { newRun, setPlan, approvePlan, beginImplementation, beginValidation, recordStepOutcome, startReview, recordReview, askQuestions, answerQuestions, acceptRun, type Run } from '../src/run.js';
 import { aggregateUsage } from '../src/usage.js';
 import { contentIdentity, type Exec } from '../src/worktree.js';
@@ -49,8 +49,8 @@ test('delivers exactly the reviewed content, untracked files included, as one co
     assert.equal(git(f.remote, 'log', '-1', '--format=%an <%ae>|%cn <%ce>', pushed), 'Config User <config@example.invalid>|Config User <config@example.invalid>', 'identity comes from git config');
     assert.equal(git(f.dir, 'status', '--porcelain'), ''); assert.equal(existsSync(join(f.dir, 'pwned')), false, 'model text was never interpolated into a shell');
     const create = ghCalls(h, 'create'); assert.equal(create.length, 1);
-    assert.deepEqual(create[0].args, ['pr', 'create', '--draft', '--base', 'main', '--head', branch, '--title', title, '--body-file', create[0].args[10]]);
-    assert.equal(existsSync(create[0].args[10]), false, 'the body file is removed');
+    assert.deepEqual(create[0].args, ['pr', 'create', '--repo', 'github.com/example/widgets', '--draft', '--base', 'main', '--head', branch, '--title', title, '--body-file', create[0].args[12]]);
+    assert.equal(existsSync(create[0].args[12]), false, 'the body file is removed');
     assert.deepEqual(gitCalls(h, 'push').map(c => c.args), [['push', 'origin', `${pushed}:${pushed}`]]);
     const everyArg = h.state.calls.flatMap(c => c.args);
     for (const forbidden of ['--force', '-f', '--force-with-lease', 'merge', '--auto', '--admin', 'deploy']) assert.equal(everyArg.includes(forbidden), false, forbidden);
@@ -92,6 +92,43 @@ test('refuses a remote that is not the authorized one', async () => {
     assert.equal(result.status, 'refused'); assert.match((result as { reason: string }).reason, /remote/i);
     assert.equal(h.state.calls.some(c => c.file === 'gh' || c.args[0] === 'commit' || c.args[0] === 'push'), false); nothingCommitted(f);
   } finally { f.done(); }
+});
+
+test('refuses a remote whose push URL was redirected or rewritten away from the authorized one', async () => {
+  for (const redirect of ['pushurl', 'pushInsteadOf'] as const) {
+    const f = fixture(), elsewhere = f.remote.replace('remote.git', 'elsewhere.git');
+    try {
+      git(f.root, 'init', '-q', '--bare', elsewhere);
+      if (redirect === 'pushurl') git(f.dir, 'config', 'remote.origin.pushurl', elsewhere); else git(f.dir, 'config', 'url.' + elsewhere + '.pushInsteadOf', f.remote);
+      assert.equal(git(f.dir, 'remote', 'get-url', 'origin') === f.remote || redirect === 'pushInsteadOf', true, 'the fetch URL alone still looks authorized');
+      const { run } = await ready(f), h = harness(f);
+      const result = await deliverRun(run, target(f), deps(f, h));
+      assert.equal(result.status, 'refused', redirect); assert.match((result as { reason: string }).reason, /remote/i);
+      assert.equal(h.state.calls.some(c => c.file === 'gh' || c.args[0] === 'commit' || c.args[0] === 'push'), false, redirect);
+      assert.equal(git(elsewhere, 'for-each-ref'), '', redirect + ': nothing reached the redirected repository'); nothingCommitted(f);
+    } finally { f.done(); }
+  }
+});
+
+test('every gh call is pinned to the authorized repository, and a URL that names none is refused', async () => {
+  const f = fixture();
+  try {
+    const { run } = await ready(f), h = harness(f);
+    assert.equal((await deliverRun(run, target(f), deps(f, h))).status, 'delivered');
+    for (const sub of ['list', 'create']) { const calls = ghCalls(h, sub); assert.equal(calls.length, 1, sub); assert.deepEqual(calls[0].args.slice(2, 4), ['--repo', 'github.com/example/widgets'], sub); }
+    const f2 = fixture();
+    try {
+      const { run: run2 } = await ready(f2), h2 = harness(f2);
+      const result = await deliverRun(run2, target(f2), { ...deps(f2, h2), repoOf: undefined });
+      assert.equal(result.status, 'refused'); assert.match((result as { reason: string }).reason, /GitHub repository/);
+      assert.equal(h2.state.calls.some(c => c.file === 'gh' || c.args[0] === 'commit' || c.args[0] === 'push'), false); nothingCommitted(f2);
+    } finally { f2.done(); }
+  } finally { f.done(); }
+});
+
+test('githubRepo accepts only a plain https, ssh or scp-style GitHub repository URL', () => {
+  for (const [url, repo] of [['https://github.com/o/r', 'github.com/o/r'], ['https://github.com/o/r.git', 'github.com/o/r'], ['git@github.com:o/r.git', 'github.com/o/r'], ['ssh://git@ghe.example.com/o/r', 'ghe.example.com/o/r']] as const) assert.equal(githubRepo(url), repo, url);
+  for (const url of ['C:/tmp/remote.git', '/srv/remote.git', 'https://github.com/o/r/extra', 'https://github.com:8443/o/r', 'file:///tmp/r.git', 'https://github.com/o/']) assert.equal(githubRepo(url), null, url);
 });
 
 test('refuses content drift after review and a moved branch, committing nothing', async () => {
