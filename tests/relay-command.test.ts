@@ -85,7 +85,7 @@ test('a picture goes only to a model with image input, and is neither sized nor 
   assert.deepEqual(switches(none), []); assert.equal(prompts(none).length, 1);
   assert.match((await last(none)).note!, /no chosen Execute model takes pictures/);
   assert.equal(names(none).includes('size'), false);
-  assert.equal(asked(none), 'The chat is on the agent: plan. Attached files: none. Attached pictures: 1.');
+  assert.equal(asked(none), 'Before this message the chat was on a read-only agent, which explains and plans and cannot change files. Attached files: none. Attached pictures: 1.');
   const second = fakeRelay({ settings: execute(entry('exec', 'high'), entry('eyes')) }); await run(second, picture);
   assert.deepEqual(input(second, 'switchModel').model, { providerID: 'p', id: 'eyes' });
   for (const file of [{ uri: 'data:image/png;base64,AAAA' }, { uri: 'file:///x/Shot.JPEG?v=1' }, { name: 'a.webp', uri: 'x' }]) assert.equal(isPicture(file), true);
@@ -194,11 +194,11 @@ test('a failure of storage, the chat lookup or the model list still sends once, 
   assert.equal((await last(quiet)).note, null, 'a failed remove is not reported');
 });
 
-test('the decider gets the text, the agent, and the names and sizes of the files; the record holds no message text and no file name', async () => {
+test("the decider gets the text, whether the chat's agent can change files, and the names and sizes of the files; the record holds no message text and no file name", async () => {
   const f = fakeRelay(); await run(f);
   const request = JSON.stringify(input(f, 'decisions'));
   assert.match(request, /fix the login test/);
-  assert.equal(asked(f), 'The chat is on the agent: plan. Attached files: a.txt (2 kB). Attached pictures: 0.');
+  assert.equal(asked(f), 'Before this message the chat was on a read-only agent, which explains and plans and cannot change files. Attached files: a.txt (2 kB). Attached pictures: 0.');
   assert.equal(/file:\/\/|\/repo|@a\.txt|\busual\b|\bexec\b|#high/.test(request), false, 'no address, no folder, no model name');
   assert.deepEqual(input(f, 'decisions').questions.map((question: { name: string }) => question.name), ['mode'], 'one model in each mode: nothing to choose');
   const record = await last(f);

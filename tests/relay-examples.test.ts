@@ -136,7 +136,7 @@ test('a run sends each example once, with every line question, and never more th
   assert.equal(host.requests.length, 4);
   assert.deepEqual(host.requests.map(request => request.model), Array(4).fill({ providerID: 'd', id: 'judge' }));
   assert.deepEqual(host.requests[0].questions.map((question: { name: string }) => question.name), ['mode', 'plan_line', 'execute_line', 'review_line']);
-  assert.match(host.requests[2].input[0].text, /"ok, do it"\nThe chat is on the agent: plan\. Attached files: none\. Attached pictures: 0\./);
+  assert.match(host.requests[2].input[0].text, /"ok, do it"\nBefore this message the chat was on a read-only agent, which explains and plans and cannot change files\. Attached files: none\. Attached pictures: 0\./);
   const tooMany = fakeHost(() => ({ answers: [] }));
   await assert.rejects(runExamples({ ...tiny, examples: Array.from({ length: 31 }, (_, index) => ({ ...tiny.examples[0], text: `message ${index}` })) }, tooMany, judgeModel, 0), /at most 30 examples/);
   assert.equal(tooMany.requests.length, 0, 'nothing is sent when the set is too big');

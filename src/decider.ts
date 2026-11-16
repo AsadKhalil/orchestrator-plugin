@@ -30,13 +30,18 @@ const flat = (text: string, max: number) => safeHead(text.replace(/[\s\x00-\x1f\
 /** Only the last part of a path is sent, so the name of a home folder never leaves the machine. */
 const fileName = (name: string) => flat(name.split(/[\\/]/).pop() ?? '', MAX_NAME) || 'file';
 const size = (bytes: number | null) => bytes === null ? 'size unknown' : bytes < 1000 ? `${bytes} B` : bytes < 1_000_000 ? `${Math.round(bytes / 1000)} kB` : `${Math.round(bytes / 1_000_000)} MB`;
+/** What the chat's agent can do, so that "ok, do it" after a plan reads as a go-ahead. Never its name: "plan" is also an answer, and told
+ * "The chat is on the agent: plan" a real decider hedged on clear fix requests (16 Nov). Other agents are unknown here, so nothing is said. */
+const agentLine = (agent: string | null) =>
+  agent === 'plan' ? 'Before this message the chat was on a read-only agent, which explains and plans and cannot change files. '
+  : agent === 'build' ? 'Before this message the chat was on an agent that can change files. ' : '';
 
 function describe(input: DecideInput): string {
   const text = capText(input.text);
   if (input.kind === 'helper') return `A task that a model is handing to a helper: "${text}"`;
   const shown = input.files.slice(0, MAX_FILE_NAMES).map(file => `${fileName(file.name)} (${size(file.bytes)})`).join(', '), more = input.files.length - MAX_FILE_NAMES;
   const files = input.files.length ? `${shown}${more > 0 ? ` and ${more} more` : ''}` : 'none';
-  return `The person's message: "${text}"\nThe chat is on the agent: ${flat(input.agent ?? '', MAX_NAME) || 'unknown'}. Attached files: ${files}. Attached pictures: ${input.images}.`;
+  return `The person's message: "${text}"\n${agentLine(input.agent)}Attached files: ${files}. Attached pictures: ${input.images}.`;
 }
 
 const modeQuestion = {

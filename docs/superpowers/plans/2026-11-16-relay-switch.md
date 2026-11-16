@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-13-relay-chat-model-guidance-design.md`, "Stage 1b: the switch, and the terminal". Host facts: the 2026-11-16 entry of `docs/compatibility.md`.
 
-**Status:** written 2026-11-16. The owner chose: per chat, push straight to `main`, real tests in their OpenCode stopping at $2, MIT. Tasks 1 to 5 are built and pushed (each closed with the four checks; 25 guards checked red then green; both isolated smokes PASS, the model smoke with the switch on and off). Task 6, the live check in the owner's OpenCode, waits for their yes at that moment.
+**Status:** written 2026-11-16. The owner chose: per chat, push straight to `main`, real tests in their OpenCode stopping at $2, MIT. Tasks 1 to 5 are built and pushed (each closed with the four checks; 25 guards checked red then green; both isolated smokes PASS, the model smoke with the switch on and off). Task 6, the live check in the owner's OpenCode, ran in Desktop on 16 Nov with their yes and Ollama Cloud models, and found and fixed one bug (the decider was told the agent's name); results in `docs/compatibility.md`. Its box stays open for the interactive terminal app, which I could not drive; the owner can try `/relay on`, a message, and `/relay off` there.
 
 ## Global Constraints
 

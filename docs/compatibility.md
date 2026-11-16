@@ -604,3 +604,50 @@ The owner asked for a switch that sends every message in a chat through Relay (`
 - The prompt the hook sees has `text`, `files`, `agents` and `skills`, the same shape a command receives.
 - **Not tested:** a helper's completion notice (assumed to arrive like a synthetic message, not checked); files or pictures through the hook; the terminal app's own screen; Desktop; a real provider; a multi-step turn while a switch lands mid-turn (Stage 0 found that a switch changes the remaining steps of a running turn); macOS and Linux.
 - **The built switch on the same isolated host (later the same day).** `npm run smoke:host:model` now also sends `/relay on` in its `/relay` chat, a plain message, a `/relay` message, `/relay off` and one more plain message, all with no decider chosen (no mock can be a decision model, so nothing is switched). PASS: each message made exactly one model request; with the switch on, the plain message got one record and the `/relay` message one record, not two; with it off, the last message got none. `npm run smoke:host` also passed on this build. Not run: a switch to another model through the hook with a real decider, the pill, the terminal app.
+
+## 2026-11-16 — Task 6: the live check in the owner's OpenCode Desktop 2.3.0 (Windows 11, Ollama Cloud models)
+
+The owner said yes to fixing their stuck OpenCode and to my testing Relay in it ("Yes, fix and test"), with real Ollama models and a $2 limit. Desktop 2.3.0 (Electron 44.9.1) with its bundled CLI 2.3.0; Relay loaded from this repository's `dist/`. I drove Desktop through a debugging port bound to 127.0.0.1 (Desktop restarted with `--remote-debugging-port`, from an environment without Claude Code's variables) and restarted it normally afterwards.
+
+**Why the panel, "Open Relay" and the Plugins list were missing.**
+- At 14:20 local time Desktop judged the owner's background service unresponsive and replaced it. The new service failed to boot one second after the old process was killed: `SqlError: Failed to configure database (cause: SQLiteError: disk I/O error)`. The failed process stayed alive, kept port 28894 and answered Desktop's `/api/info` check with HTTP 500.
+- Desktop's main process does not replace a service in that state: its start-up step throws "Background service failed to start" and retries every 2 seconds (931 times in its newest log alone). With no server, Desktop listed no plugins, so it never got Relay's panel; the terminal app could not connect either.
+- The database then passed SQLite's `quick_check` (read-only). Ending the failed process let a fresh service start, and the Plugins list, the panel, the palette entry and the pill all appeared.
+- Underneath: since at least 10 Nov, three days before Relay was first installed, the owner's service often takes 40 to 90 seconds to open a project, with nothing logged meanwhile. Desktop's 2-second health checks time out and Desktop replaces the service, often 10 to 19 times an hour. While that loop runs, Desktop's plugin listing failed ("fetch failed", "Plugin listing timed out after 30000 ms"), and during this check Desktop said for about 20 seconds that it could not reach the computer. The cause of the slow opening was not found. Loading the plugins, Relay included, took about half a second of it.
+
+**What Desktop shows.** Settings → Extensions has three tabs: MCPs, Plugins and Skills. A plugin whose desktop UI Desktop has loaded gets Reload and a switch; the badges name only its other parts (`feature-pilot` showed "Server"). With no server the tab stays empty, with no error. "Open Relay" appears in the command palette (Ctrl+K) while a chat is open.
+
+**The test, in the throwaway project `relay-live-test`, in one chat.** Modes tab: Plan `ollama-cloud/kimi-k3.1-pro`; Execute `ollama-cloud/glm-5.3` ("bigger changes across several files, new features") and `ollama-cloud/minimax-m3.1-flash` ("small quick fixes in one file"); Review `ollama-cloud/deepseek-v4-pro`; decider `ollama-cloud/clef:27b`. The settings were stored at once (`relay/settings`).
+
+| Sent | Relay's record | What happened |
+|---|---|---|
+| Try box: "fix the typo in the README title" | Execute, minimax-m3.1-flash, 93% sure, line fit 98%, 1912 ms | (nothing sent to a chat) |
+| switch on, plain: "In two sentences, what does src/calc.js do?" | Plan, kimi-k3.1-pro, 87% sure, 2184 ms | "Switched to Kimi K3.1 Pro", answered |
+| `/relay fix the off-by-one bug in average() in src/calc.js` | Plan, kimi-k3.1-pro, 51% sure, "not sure, so Plan" | **wrong** (below). The `plan` agent called Plannotator's `submit_plan`, then edited the file, and was stopped |
+| (fix built and loaded) `/relay make largest() in src/calc.js return 0 for an empty list` | Execute, minimax-m3.1-flash, 93% sure, line fit 96%, 549 ms | "Switched to MiniMax-M3.1-Flash", edited and checked the file |
+| `/relay review src/calc.js and list any remaining bugs, briefly` | Review, deepseek-v4-pro, 91% sure, 899 ms | "Switched to deepseek-v4-pro", ended with "Verdict: approve" |
+| pill → "Turn Relay off for this chat" | flag stored `false` | pill read "Relay off" |
+| switch off, plain question | no record | stayed on deepseek-v4-pro, no switch line |
+| `/relay on` | flag stored `true` | pill read "Relay on" about a second later; nothing went to a model |
+| switch on, chat on `plan`, plain: "add a one-line comment above largest() …" | Execute, minimax-m3.1-flash, 90% sure, line fit 94%, 352 ms | edited the file |
+| switch on, plain: "Start a helper (subagent) to check src/calc.js for bugs …" | chat: Review, deepseek-v4-pro, 71%; helper: Review, deepseek-v4-pro, 92%, 342 ms | the helper's own chat ran on `ollama-cloud/deepseek-v4-pro` (OpenCode's record), $0.016 |
+
+**The bug: the agent's name pulled the decider to Plan.** The decider was told "The chat is on the agent: plan", and "plan" is also one of its answers. Relay's own request, sent to the decisions API with only the agent changed, for "fix the off-by-one bug in average() in src/calc.js": agent `plan` 0.510 sure of execute (twice), `build` 0.935, none 0.925. Three wordings over four messages:
+
+| Message (agent) | agent's name | no agent line | "a read-only agent … cannot change files" |
+|---|---|---|---|
+| the fix (plan) | execute 0.51 | execute 0.92 | execute 0.90 |
+| "ok, do it" (plan) | execute 0.80 | execute 0.90 | execute 0.88 |
+| "what does src/calc.js do?" (plan / build) | plan 0.92 / 0.93 | plan 0.93 / 0.92 | plan 0.97 / 0.93 |
+| "review src/calc.js and list any bugs" (plan / build) | review 0.91 / 0.94 | review 0.94 / 0.94 | review 0.92 / 0.93 |
+
+Fixed in `src/decider.ts`: `plan` is described as a read-only agent and `build` as one that can change files; other agents are not mentioned, and no agent's name is sent. The panel and the README say so. The service reloaded the rebuilt `dist/` in place, without a restart, and the next fix request in a chat on `plan` went to Execute (rows above).
+
+**Other findings.**
+- With Plannotator installed, a turn on the `plan` agent submitted a plan and then edited a file in the same turn. Plan's "cannot change files" depends on the `plan` agent, which another plugin can change.
+- `opencode run "/relay on"` does not run the command: it sent the text to the default model as a plain message (an archived session, $0). Slash commands belong to the interactive terminal app.
+- Right after a decision, the Modes tab's "Last choice" line still showed the previous one, while the pill's menu showed the newest. Not followed up.
+
+**Cost.** The test chat went from $0.01 to $0.22 (OpenCode's figure, the helper included). About 40 decider requests (Try box, the experiments above) at $0.24 per million input tokens came to about a cent. Far under the $2 limit.
+
+**Not tested:** pictures and attached files through Relay; the bigger-changes Execute model (`glm-5.3` was never picked); the interactive terminal app (I could not type into it); a busy chat with the switch on; macOS and Linux.

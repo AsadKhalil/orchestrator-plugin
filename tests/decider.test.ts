@@ -4,19 +4,29 @@ import { buildDecisionRequest, capText, decide, MAX_CHARS, MAX_FILE_NAMES, TIMEO
 
 const judge = { providerID: 'd', id: 'judge', variant: null };
 const chat: DecideInput = { kind: 'chat', text: 'fix the login test', agent: 'plan', files: [{ name: 'a.txt', bytes: 2048 }], images: 0, lines: {} };
+const READ_ONLY = 'Before this message the chat was on a read-only agent, which explains and plans and cannot change files. ';
 const choice = (name: string, value: unknown, confidence: unknown) => ({ type: 'choice', name, choice: value, probabilities: [], confidence });
 const reply = (value: unknown, confidence: unknown, ...more: unknown[]) => ({ answers: [choice('mode', value, confidence), ...more], cost: 0, tokens: { input: 418, output: 38 } });
 
 test('with no lines to ask about, the request is one choice question with the three modes', () => {
   const request = buildDecisionRequest(judge, chat);
   assert.deepEqual(request.model, { providerID: 'd', id: 'judge' });
-  assert.deepEqual(request.input, [{ type: 'text', text: 'The person\'s message: "fix the login test"\nThe chat is on the agent: plan. Attached files: a.txt (2 kB). Attached pictures: 0.' }]);
+  assert.deepEqual(request.input, [{ type: 'text', text: `The person's message: "fix the login test"\n${READ_ONLY}Attached files: a.txt (2 kB). Attached pictures: 0.` }]);
   assert.deepEqual(request.questions.map(q => [q.type, q.name, q.choices.map(c => c.value)]), [['choice', 'mode', ['plan', 'execute', 'review']]]);
   assert.match(request.questions[0].instructions, /Choose execute only when it clearly asks/);
   const helper = buildDecisionRequest({ ...judge, variant: 'fast' }, { kind: 'helper', text: 'Review the diff', agent: null, files: [], images: 0, lines: {} });
   assert.deepEqual(helper.model, { providerID: 'd', id: 'judge', variant: 'fast' });
   assert.equal(helper.input[0].text, 'A task that a model is handing to a helper: "Review the diff"');
-  assert.match(buildDecisionRequest(judge, { ...chat, agent: null }).input[0].text, /agent: unknown\./);
+});
+
+test("the decider learns whether the chat's agent can change files, never the agent's name", () => {
+  const second = (agent: string | null) => buildDecisionRequest(judge, { ...chat, agent }).input[0].text.split('\n')[1];
+  assert.equal(second('plan'), `${READ_ONLY}Attached files: a.txt (2 kB). Attached pictures: 0.`);
+  assert.equal(second('build'), 'Before this message the chat was on an agent that can change files. Attached files: a.txt (2 kB). Attached pictures: 0.');
+  // "plan" is also one of the answers. Told "The chat is on the agent: plan", a real decider (clef:27b, 16 Nov) was 0.51 sure of execute for
+  // "fix the off-by-one bug in average() in src/calc.js", so the unsure rule sent it to Plan; with this wording it was 0.90 sure.
+  assert.doesNotMatch(second('plan'), /\bplan\b/);
+  for (const agent of ['my-team-agent', 'general', null]) assert.equal(second(agent), 'Attached files: a.txt (2 kB). Attached pictures: 0.', `${agent}: no agent line, and no name`);
 });
 
 test('each mode with lines gets its own question: the lines as numbered choices, then none', () => {
@@ -33,13 +43,13 @@ test('each mode with lines gets its own question: the lines as numbered choices,
 test('the decider is told the names and sizes of at most ten files, and never a folder', () => {
   const second = (files: FileFact[], images = 0) => buildDecisionRequest(judge, { ...chat, files, images }).input[0].text.split('\n')[1];
   assert.equal(MAX_FILE_NAMES, 10);
-  assert.equal(second([]), 'The chat is on the agent: plan. Attached files: none. Attached pictures: 0.');
-  assert.equal(second([{ name: 'a.txt', bytes: 999 }, { name: 'notes.md', bytes: null }, { name: 'big.log', bytes: 12_345_678 }], 2), 'The chat is on the agent: plan. Attached files: a.txt (999 B), notes.md (size unknown), big.log (12 MB). Attached pictures: 2.');
-  assert.equal(second([{ name: 'C:\\Users\\someone\\private folder\\plan.md', bytes: 1500 }, { name: '/home/someone/src/app.ts', bytes: 0 }]), 'The chat is on the agent: plan. Attached files: plan.md (2 kB), app.ts (0 B). Attached pictures: 0.');
+  assert.equal(second([]), `${READ_ONLY}Attached files: none. Attached pictures: 0.`);
+  assert.equal(second([{ name: 'a.txt', bytes: 999 }, { name: 'notes.md', bytes: null }, { name: 'big.log', bytes: 12_345_678 }], 2), `${READ_ONLY}Attached files: a.txt (999 B), notes.md (size unknown), big.log (12 MB). Attached pictures: 2.`);
+  assert.equal(second([{ name: 'C:\\Users\\someone\\private folder\\plan.md', bytes: 1500 }, { name: '/home/someone/src/app.ts', bytes: 0 }]), `${READ_ONLY}Attached files: plan.md (2 kB), app.ts (0 B). Attached pictures: 0.`);
   const many = second(Array.from({ length: 13 }, (_, index) => ({ name: `f${index}.ts`, bytes: 10 })));
   assert.match(many, /f9\.ts \(10 B\) and 3 more\. Attached pictures: 0\.$/);
   assert.equal(many.includes('f10.ts'), false);
-  assert.equal(second([{ name: 'a\nb\t  c.txt', bytes: 1 }]), 'The chat is on the agent: plan. Attached files: a b c.txt (1 B). Attached pictures: 0.');
+  assert.equal(second([{ name: 'a\nb\t  c.txt', bytes: 1 }]), `${READ_ONLY}Attached files: a b c.txt (1 B). Attached pictures: 0.`);
   assert.match(second([{ name: `${'n'.repeat(100)}.txt`, bytes: 1 }]), new RegExp(`files: ${'n'.repeat(80)} \\(1 B\\)\\.`));
   const text = second([{ name: `${'n'.repeat(79)}\u{1F600}.txt`, bytes: 1 }]);   // the 80-character cut would otherwise fall inside the emoji
   assert.doesNotThrow(() => encodeURIComponent(text));

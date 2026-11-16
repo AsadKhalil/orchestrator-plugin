@@ -2,7 +2,7 @@
 
 **Relay picks the right model for each message in OpenCode.** You choose models for three kinds of work, Plan, Execute and Review, once. Then you type `/relay <message>`, or turn Relay on for a chat. A small decision model reads the message, picks the kind of work and the model that fits it, switches the chat to that model, and sends your message. The answer appears in the same chat.
 
-> Relay is early. It is built for OpenCode 2.3.0. So far it has run against tests and an isolated OpenCode with a mock model; the first live run in a full OpenCode setup is still to come. See [Status](#status).
+> Relay is early. It is built for OpenCode 2.3.0. It has run against tests, an isolated OpenCode with a mock model, and one live check in a full OpenCode Desktop setup on Windows with real models (16 Nov 2026). See [Status](#status).
 
 (The package and its internal ids are still named `feature-pilot`. That is on purpose: renaming them would lose saved settings.)
 
@@ -45,12 +45,14 @@ To update later: `git pull`, `npm ci`, `npm run build`, then restart OpenCode.
 
 ## Set up (once, in OpenCode Desktop)
 
-1. Open the command palette and run **Open Relay**. The Relay panel opens on its **Modes** tab.
+1. Open a chat, open the command palette (Ctrl+K) and run **Open Relay**. The Relay panel opens on its **Modes** tab.
 2. Add models to **Plan**, **Execute** and **Review**. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
 3. Choose a **decider**: a decision model. OpenCode lists the ones you can use; `opencode/jev-1.13-free` is free.
 4. Type a sample message in the test box and press **Try** to see what Relay would pick.
 
 The settings are shared by all your projects. The terminal app has no settings screen, so set them up in Desktop.
+
+**If Open Relay is missing:** it shows only while a chat is open. Then check Settings → Extensions → Plugins: `feature-pilot` should be listed with **Reload** and a switch. If that list stays empty, or Desktop says it can't reach your computer, OpenCode's background service is not running properly and Desktop shows no plugin panels. Quit Desktop, end `opencode-cli.exe` (the one started with `serve --service`) in Task Manager, and start Desktop again.
 
 ## Use
 
@@ -68,7 +70,7 @@ The settings are shared by all your projects. The terminal app has no settings s
 
 ## What leaves your machine
 
-To choose, Relay sends the decider's provider your message text (at most 4,000 characters), the names and sizes of attached files (not their contents), how many pictures are attached, the name of the chat's agent, and your "use it for" lines. It never sends file contents, pictures, earlier messages, model names or prices. When a model starts a helper, the helper's task text is sent the same way; that text is written by the model and may quote code or chat content you do not see.
+To choose, Relay sends the decider's provider your message text (at most 4,000 characters), the names and sizes of attached files (not their contents), how many pictures are attached, whether the chat's agent can change files, and your "use it for" lines. It never sends file contents, pictures, earlier messages, model names or prices. When a model starts a helper, the helper's task text is sent the same way; that text is written by the model and may quote code or chat content you do not see.
 
 OpenCode makes every request, with your OpenCode login. Relay never sees your API keys.
 
@@ -76,7 +78,8 @@ OpenCode makes every request, with your OpenCode login. Relay never sees your AP
 
 - **Ran on a real OpenCode 2.3.0, isolated, with a mock model (Windows):** the plugin loads; `/relay` is registered; with no decider, a message goes once to the chat's own model; `/relay on` makes each message go through Relay once, and `/relay off` stops it. In throwaway checks, a model or agent switch made as a message is sent served that same message.
 - **Ran against a real decision model:** 30 made-up messages, twice, with `opencode/jev-1.13-free` from an isolated OpenCode with no login.
-- **Not yet run in a full OpenCode setup:** switching between real models, helpers on the Review model, pictures, the Modes tab and the pill in Desktop, the terminal app, and the install steps above.
+- **Ran in a full OpenCode Desktop setup (Windows, Ollama Cloud models, 16 Nov 2026):** the Modes tab and its Try box; `/relay` placing messages on the Plan, Execute and Review models; the pill and `/relay on` turning the switch on and off; plain messages with the switch on (placed) and off (left alone); a helper that checks work starting on the Review model. This check found and fixed one bug: after a Plan answer, a clear "fix …" request was judged unsure and stayed on Plan.
+- **Not yet run in a full setup:** pictures and attached files, the interactive terminal app, macOS and Linux, and the install steps above followed by a new user.
 
 Details are in the [compatibility findings](docs/compatibility.md) and the [change log](docs/implementation-progress.md).
 
@@ -85,6 +88,7 @@ Known limits:
 - Decision requests are not counted against any budget.
 - With `/relay on`, a chat that is busy answering is not switched; the new message goes to the model already in use. `/relay` waits up to two minutes for a busy chat.
 - A file's size is guessed at four bytes per token, so a file close to a model's limit can still be too big for it.
+- Plan and Review rely on OpenCode's `plan` agent not editing. Another plugin can change that: in the live check, with the Plannotator plugin installed, a Plan turn submitted a plan and then edited a file.
 
 ## The older pipeline
 

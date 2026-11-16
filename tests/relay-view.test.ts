@@ -31,12 +31,12 @@ test('a try in the test box reads as one line, with the cost', () => {
 });
 
 test('the panel says what is sent to the decider and to whom, with the limits the decider really has', () => {
-  assert.equal(privacyNote('opencode'), "To choose, Relay sends to opencode: your message text (at most 4,000 characters), the names and sizes of attached files (the first 10), how many pictures are attached, the name of the chat's agent, and the lines you wrote above. Never the contents of files, pictures or earlier messages. While a decider and a Review model are chosen, the task text of each helper that a model starts is sent the same way — written by the calling model, so it may itself quote code, files or earlier chat, and the person does not see it before it goes out.");
+  assert.equal(privacyNote('opencode'), "To choose, Relay sends to opencode: your message text (at most 4,000 characters), the names and sizes of attached files (the first 10), how many pictures are attached, whether the chat's agent can change files, and the lines you wrote above. Never the contents of files, pictures or earlier messages. While a decider and a Review model are chosen, the task text of each helper that a model starts is sent the same way — written by the calling model, so it may itself quote code, files or earlier chat, and the person does not see it before it goes out.");
   assert.match(privacyNote(null), /^To choose, Relay sends to the decider's provider: your message text/);
   assert.deepEqual([MAX_CHARS, MAX_FILE_NAMES], [4000, 10]);
-  // Everything the request carries is something the sentence names: the text, file names with sizes, a count of pictures, the agent and the lines.
+  // Everything the request carries is something the sentence names: the text, file names with sizes, a count of pictures, what the agent can do and the lines.
   const request = buildDecisionRequest({ providerID: 'opencode', id: 'judge', variant: null }, { kind: 'chat', text: 'fix the test', agent: 'build', files: [{ name: 'C:/home/me/notes.txt', bytes: 2048 }], images: 2, lines: { plan: ['deep design', 'quick questions'] } });
-  assert.deepEqual(request.input, [{ type: 'text', text: 'The person\'s message: "fix the test"\nThe chat is on the agent: build. Attached files: notes.txt (2 kB). Attached pictures: 2.' }]);
+  assert.deepEqual(request.input, [{ type: 'text', text: 'The person\'s message: "fix the test"\nBefore this message the chat was on an agent that can change files. Attached files: notes.txt (2 kB). Attached pictures: 2.' }]);
   assert.deepEqual(request.questions.map(question => question.name), ['mode', 'plan_line']);
   assert.deepEqual(request.questions[1].choices.map(choice => choice.description), ['deep design', 'quick questions', 'None of these fits clearly.']);
 });
