@@ -11,12 +11,13 @@
     "smoke:host": "node scripts/smoke-host.mjs",
     "smoke:host:model": "node scripts/smoke-host-model.mjs",
     "measure": "tsx scripts/measure-workflow.ts",
-    "check:prices": "tsx scripts/check-prices.ts"
+    "check:prices": "tsx scripts/check-prices.ts",
+    "examples:decider": "tsx scripts/decider-examples.ts"
   },
   "dependencies": {
-    "@opencode/client": "2.2.7",
-    "@opencode/plugin": "2.2.7",
-    "@opencode/schema": "2.2.7",
+    "@opencode/client": "2.3.0",
+    "@opencode/plugin": "2.3.0",
+    "@opencode/schema": "2.3.0",
     "effect": "4.1.0"
   },
   "devDependencies": {

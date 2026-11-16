@@ -14,6 +14,9 @@ function withSessionHook(ctx: any): any {
   ctx.session.hook ??= async () => ({ async dispose() {} });
   ctx.session.get ??= async () => ({});
   ctx.rpc ??= { async register() { return { async dispose() {} }; } };
+  ctx.command ??= { async transform() { return { async dispose() {} }; } };
+  ctx.tool ??= {};
+  ctx.tool.hook ??= async () => ({ async dispose() {} });
   return ctx;
 }
 
@@ -140,7 +143,7 @@ test('rolls back permission and request hooks if inventory RPC registration fail
     session: { async hook() { return { async dispose() { disposed.push('request'); } }; } },
     rpc: { async register() { throw new Error('RPC failed'); } },
   };
-  await assert.rejects(async () => plugin.setup(ctx as never), /RPC failed/);
+  await assert.rejects(async () => plugin.setup(withSessionHook(ctx) as never), /RPC failed/);
   assert.deepEqual(disposed.sort(), ['permission', 'request', 'request']);
 });
 
@@ -192,7 +195,7 @@ test('finds sessions created after another runtime initialized using host metada
     model: { async list() { return { data: [{ providerID:'p', id:'m', name:'M', enabled:true, status:'active', variants:[], capabilities:{input:['text'],output:['text'],tools:true}, limit:{context:100,output:10} }] }; } },
     rpc: { async register() { return { async dispose() {} }; } },
   };
-  const first = await createRuntime(ctx as never), second = await createRuntime(ctx as never);
+  const first = await createRuntime(withSessionHook(ctx) as never), second = await createRuntime(ctx as never);
   await second.host.prepareStage({runID:'run',role:'planner',model:{providerID:'p',id:'m'}});
   const owned = {sessionID:'ses_owned', action:'shell', effect:'allow'}; await permissions[0](owned); assert.equal(owned.effect,'deny');
   await assert.rejects(requests[0]({sessionID:'ses_owned',kind:'primary'}), /spending/i);
@@ -201,10 +204,40 @@ test('finds sessions created after another runtime initialized using host metada
   await first.dispose(); await second.dispose();
 });
 
+test('the runtime serving a run worktree judges its coder by the project settings, not by settings for the worktree directory', async () => {
+  // Observed on a real 2.2.7 host: the coder session lives in <project>.feature-pilot/<run>, the host runs the plugin once per directory, and that
+  // instance found no selections or policy under its own directory, so the guard refused the coder's model and shell actions were denied.
+  const { createRuntime } = await import('../src/index.js');
+  const project = joinPath(osTmpdir(), 'wt-project'), worktree = joinPath(osTmpdir(), 'wt-project.feature-pilot', 'run-1');
+  const records = new Map<string, unknown>([
+    ['model-selections/' + encodeURIComponent(project), { revision: 1, roles: { planner: [], coder: [{ providerID: 'p', id: 'm', variant: null }], reviewer: [] } }],
+    ['policy/' + encodeURIComponent(project), { revision: 1, maxOutputTokens: 4000, coderEnabled: true, routes: [] }],
+  ]);
+  const sessions = new Map<string, unknown>();
+  const hooks = { permissions: [] as ((event: any) => Promise<void>)[], requests: [] as ((event: any) => Promise<void>)[] };
+  const contextFor = (directory: string, into: typeof hooks) => ({ location: { directory }, storage: { async scan() { return { entries: [] }; }, async get(k: string) { return records.get(k); }, async set(k: string, v: unknown) { records.set(k, v); } },
+    permission: { async hook(_n: string, cb: (e: any) => Promise<void>) { into.permissions.push(cb); return { async dispose() {} }; } },
+    session: { async hook(n: string, cb: (e: any) => Promise<void>) { if (n === 'experimental.model.resolve') into.requests.push(cb); return { async dispose() {} }; }, async get({ sessionID }: { sessionID: string }) { return sessions.get(sessionID) ?? {}; }, async create(input: any) { sessions.set('ses_coder', { metadata: input.metadata }); return { id: 'ses_coder' }; } },
+    model: { async list() { return { data: [{ providerID: 'p', id: 'm', name: 'M', enabled: true, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 100, output: 10 } }] }; } },
+    rpc: { async register() { return { async dispose() {} }; } },
+  });
+  const projectHooks = structuredClone(hooks), worktreeHooks = structuredClone(hooks);
+  const projectRuntime = await createRuntime(withSessionHook(contextFor(project, projectHooks)) as never), worktreeRuntime = await createRuntime(withSessionHook(contextFor(worktree, worktreeHooks)) as never);
+  try {
+    await projectRuntime.host.prepareStage({ runID: 'run', role: 'coder', model: { providerID: 'p', id: 'm' }, work: { directory: worktree, allow: ['shell'] } });
+    const shell = { sessionID: 'ses_coder', action: 'shell', effect: 'allow' }; await worktreeHooks.permissions[0](shell);
+    assert.equal(shell.effect, 'allow', 'the project enabled its coder, so the worktree instance must let it run shell commands');
+    const web = { sessionID: 'ses_coder', action: 'webfetch', effect: 'allow' }; await worktreeHooks.permissions[0](web);
+    assert.equal(web.effect, 'deny', 'the coder profile still excludes everything else');
+    // The host reports a model with no variant requested as "default". Whatever else refuses the request, it must not be the selection check.
+    await assert.rejects(worktreeHooks.requests[0]({ sessionID: 'ses_coder', kind: 'primary', model: { providerID: 'p', id: 'm', variant: 'default' } }), (error: Error) => /spending/i.test(error.message) && !/not selected/i.test(error.message));
+  } finally { await projectRuntime.dispose(); await worktreeRuntime.dispose(); }
+});
+
 test('fails closed for an uncached session when host session lookup fails', async () => {
   const { createRuntime } = await import('../src/index.js'); let request: (e:any)=>Promise<void> = async()=>{};
   const ctx = { storage:{async scan(){return {entries:[]};},async get(){return undefined;}}, permission:{async hook(){return {async dispose(){}};}}, session:{async get(){throw Error('host lookup unavailable');},async hook(n:string, cb:(e:any)=>Promise<void>){if(n==='experimental.model.resolve')request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}} };
-  const runtime=await createRuntime(ctx as never);
+  const runtime=await createRuntime(withSessionHook(ctx) as never);
   await assert.rejects(request({sessionID:'ses_unknown',kind:'primary'}),/lookup unavailable/);
   await runtime.dispose();
 });
@@ -215,7 +248,7 @@ test('recognizes late ownership even when the session metadata was removed', asy
   const ctx = { storage:{async scan(){return {entries:[]};},async get(k:string){return records.get(k);}},
     permission:{async hook(_n:string, cb:(e:any)=>Promise<void>){permission=cb;return {async dispose(){}};}},
     session:{async get(){return {metadata:{}};},async hook(n:string, cb:(e:any)=>Promise<void>){if(n==='experimental.model.resolve')request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}} };
-  const runtime=await createRuntime(ctx as never);
+  const runtime=await createRuntime(withSessionHook(ctx) as never);
   records.set('owned-session/ses_late','run'); records.set('owned-role/ses_late','planner');
   const event={sessionID:'ses_late',action:'shell',effect:'allow'};await permission(event);assert.equal(event.effect,'deny');
   await assert.rejects(request({sessionID:'ses_late',kind:'primary'}),/spending/i);
@@ -226,8 +259,54 @@ test('uses marked metadata when ownership storage is unavailable', async () => {
   const { createRuntime } = await import('../src/index.js'); let request: (e:any)=>Promise<void> = async()=>{};
   const ctx={storage:{async scan(){return {entries:[]};},async get(){throw Error('storage offline');}},permission:{async hook(){return {async dispose(){}};}},
     session:{async get({sessionID}:{sessionID:string}){return sessionID==='ses_marked'?{metadata:{featurePilotRunID:'r',featurePilotRole:'planner'}}:{};},async hook(n:string,cb:(e:any)=>Promise<void>){if(n==='experimental.model.resolve')request=cb;return {async dispose(){}};}},rpc:{async register(){return {async dispose(){}};}}};
-  const runtime=await createRuntime(ctx as never);
+  const runtime=await createRuntime(withSessionHook(ctx) as never);
   await assert.rejects(request({sessionID:'ses_marked',kind:'primary'}),/spending/i);
   await assert.rejects(request({sessionID:'ses_unknown',kind:'primary'}),/storage offline/i);
   await runtime.dispose();
+});
+
+// ---- Relay: the /relay command as the plugin registers it ----
+/** A host that keeps what the plugin adds as commands. The host runs the callback again whenever it rebuilds its commands, so the fake runs it twice. */
+function commandHost(records: Map<string, unknown>) {
+  const added: any[] = [], prompts: unknown[] = [], hooks: { name: string; handler: (event: any) => Promise<void> }[] = [], asked: any[] = []; let disposed = 0;
+  const ctx = withSessionHook({
+    location: { directory: '/project' },
+    storage: { async get(key: string) { return records.get(key); }, async set(key: string, value: unknown) { records.set(key, value); }, async scan() { return { entries: [...records].filter(([key]) => key.startsWith('owned-session/')).map(([key, value]) => ({ key, value })) }; } },
+    permission: { async hook() { return { async dispose() {} }; } },
+    command: { async transform(callback: (editor: { add(definition: unknown): void }) => void) { for (const list of [[], added]) callback({ add(definition) { list.push(definition); } }); return { async dispose() { disposed++; } }; } },
+    tool: { async hook(name: string, handler: (event: any) => Promise<void>) { hooks.push({ name, handler }); return { async dispose() { disposed++; } }; } },
+    model: { async list() { return { data: [{ providerID: 'p', id: 'm', name: 'M', enabled: true, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 100, output: 10 } }] }; } },
+    experimental: { generate: { async decisions(request: unknown) { asked.push(request); return { answers: [{ type: 'choice', name: 'mode', choice: 'review', probabilities: [], confidence: 0.95 }], cost: 0 }; } } },
+    session: { async prompt(input: unknown) { prompts.push(input); } },
+  });
+  return { ctx, added, prompts, hooks, asked, disposed: () => disposed };
+}
+
+test('registers /relay and the helper hook once and disposes both', async () => {
+  const host = commandHost(new Map());
+  const cleanup = await plugin.setup(host.ctx as never);
+  assert.deepEqual(host.added.map(command => [command.name, typeof command.description, typeof command.execute]), [['relay', 'string', 'function']]);
+  assert.deepEqual(host.hooks.map(hook => hook.name), ['execute.before']);
+  await cleanup?.();
+  assert.equal(host.disposed(), 2);
+});
+
+test('the helper hook as registered asks the host\'s decision call and gives a checking helper the Review model', async () => {
+  const records = new Map<string, unknown>([['relay/settings', { revision: 1, modes: { plan: [], execute: [], review: [{ providerID: 'p', id: 'm', variant: null, useFor: '' }] }, decider: { providerID: 'd', id: 'judge', variant: null } }]]), host = commandHost(records);
+  await plugin.setup(host.ctx as never);
+  const event = { tool: 'subagent', sessionID: 'ses-b', input: { agent: 'general', prompt: 'Check the diff for mistakes.' } as { agent: string; prompt: string; model?: string } };
+  await host.hooks[0].handler(event);
+  assert.equal(event.input.model, 'p/m');
+  assert.deepEqual(host.asked.map(request => request.model), [{ providerID: 'd', id: 'judge' }]);
+  assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.kind, item.sessionID, item.mode, item.model]), [['helper', 'ses-b', 'review', 'p/m']]);
+});
+
+test('/relay as registered refuses a chat that a run created, and sends a normal chat\'s message once and records it', async () => {
+  const records = new Map<string, unknown>([['owned-session/ses-a', 'run-a'], ['owned-role/ses-a', 'planner']]), host = commandHost(records);
+  await plugin.setup(host.ctx as never);
+  const relay = host.added[0];
+  await assert.rejects(relay.execute({ sessionID: 'ses-a', prompt: { text: 'hi' }, delivery: 'steer' }), /does not work in a chat that a Relay run created/);
+  await relay.execute({ sessionID: 'ses-b', prompt: { text: 'hi' }, delivery: 'queue' });
+  assert.deepEqual(host.prompts, [{ text: 'hi', sessionID: 'ses-b', delivery: 'queue' }]);
+  assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.kind, item.sessionID, item.mode, item.note]), [['chat', 'ses-b', null, 'no decider chosen']]);
 });

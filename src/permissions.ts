@@ -3,6 +3,8 @@ type Evaluation = { sessionID: string; action: string; effect: 'allow' | 'ask' |
 const readOnlyActions = new Set(['read', 'glob', 'grep', 'question', 'webfetch', 'websearch']);
 /** The only actions a coder session may be granted, and only when the operator has enabled the coder in policy. */
 export const coderProfile = { allowedActions: ['read', 'glob', 'grep', 'edit', 'shell'] as readonly string[] };
+/** What a planner session is allowed on top of its blanket deny: read and search the project, because its prompt tells it to inspect the repository. No web, question, edit or shell. */
+export const plannerProfile = { allowedActions: ['read', 'glob', 'grep'] as readonly string[] };
 const coderActions = new Set([...readOnlyActions, 'edit', 'shell']);
 
 /** Never grants permission; unrelated sessions and existing denials remain unchanged. */

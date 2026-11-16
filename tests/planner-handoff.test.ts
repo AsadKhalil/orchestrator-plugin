@@ -21,6 +21,34 @@ test('persists a completed owned planner reply as a clarification', async () => 
   await assert.rejects(savePlannerReply(repo, host as never, input), /stale/i);
 });
 
+test('accepts a stage the host reports at its default variant when none was requested', async () => {
+  // Observed on a real 2.2.7 host: the session and its replies say variant "default" when the plugin asked for no variant.
+  const { repo, host, reply, input } = await setup();
+  const hostModel = { providerID: 'p', id: 'm', variant: 'default' };
+  host.stageModels = async () => ({ expected: { providerID: 'p', id: 'm' } as never, current: hostModel });
+  reply.model = hostModel;
+  const result = await savePlannerReply(repo, host as never, input);
+  assert.equal(result.state, 'clarifying');
+});
+
+test('tolerates a call to a tool the host reports as unavailable, and nothing else outside the read-only set', async () => {
+  // Observed on a real 2.2.7 host: global plugin instructions made the planner try a "skill" tool its session does not have; the host refused the call without running it.
+  const unavailable = { status: 'error', error: { type: 'tool.execution', message: 'No tool named "skill" is currently available. Please use a tool from the available tool list.' } };
+  const cases: [string, Record<string, unknown>, boolean][] = [
+    ['an unavailable tool the host refused', { name: 'skill', state: unavailable }, true],
+    ['an outside tool that completed', { name: 'skill', state: { status: 'completed' } }, false],
+    ['an outside tool that failed while running', { name: 'shell', state: { status: 'error', error: { type: 'tool.execution', message: 'Command exited with code 1' } } }, false],
+    ['an outside tool with a lookalike error type', { name: 'shell', state: { status: 'error', error: { type: 'other', message: 'No tool named "shell" is currently available.' } } }, false],
+  ];
+  for (const [label, part, accepted] of cases) {
+    const { repo, host, reply, input } = await setup();
+    const intermediate = { ...reply, id: 'msg_tool', finish: 'tool-calls', content: [{ type: 'tool', ...part }] };
+    host.readStage = async () => ({ outcome: 'succeeded', messages: [{ type: 'user', id: 'msg_prompt', text: 'prompt' }, intermediate as never, reply, { type: 'idle' } as never] });
+    if (accepted) assert.equal((await savePlannerReply(repo, host as never, input)).state, 'clarifying', label);
+    else { await assert.rejects(savePlannerReply(repo, host as never, input), Error, label); assert.equal((await repo.get('run')).revision, 0, label); }
+  }
+});
+
 test('does not save unowned, mismatched, partial, ambiguous or malformed replies', async () => {
   for (const mode of ['unowned', 'model', 'incomplete', 'ambiguous', 'malformed']) {
     const { repo, host, reply, input } = await setup();

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { plannerProfile } from './permissions.js';
 
 /** A stage is prepared with all tools denied until host permissions are verified. */
 type ModelRef = { providerID: string; id: string; variant?: string };
@@ -34,13 +35,13 @@ export function createHost(context: HostContext, onOwned?: (id: string, role: St
       if (stage.model.variant !== undefined && !model.variants.includes(stage.model.variant)) throw new Error('Selected model variant is unavailable');
       if (stage.work && (stage.role !== 'coder' || !stage.work.directory.trim() || !stage.work.allow.length)) throw new Error('Only a coder stage can be given a worktree and permissions');
       const session = await context.session.create({
-        title: `Feature Pilot: ${stage.role}`,
+        title: `Relay: ${stage.role}`,
         model: stage.model,
         metadata: { featurePilotRunID: stage.runID, featurePilotRole: stage.role },
         // Allow rules are deliberately `resource: '*'`: a shell rule's resource is the command text, not a path, and how 2.2.7 matches file-path
         // patterns is unverified, so a guessed path scope could silently deny everything or give false assurance. The worktree separates the
         // checkout only; it is not a sandbox. The coder stays off unless the operator enables it (see docs/compatibility.md).
-        permissions: [{ action: '*', resource: '*', effect: 'deny' }, ...(stage.work?.allow ?? []).map(action => ({ action, resource: '*', effect: 'allow' as const }))],
+        permissions: [{ action: '*', resource: '*', effect: 'deny' }, ...(stage.work?.allow ?? (stage.role === 'planner' ? plannerProfile.allowedActions : [])).map(action => ({ action, resource: '*', effect: 'allow' as const }))],
         ...(stage.work ? { location: { directory: stage.work.directory } } : {}),
       });
       if (!session.id) throw new Error('Host returned an empty session ID');

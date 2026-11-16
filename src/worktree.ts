@@ -97,10 +97,22 @@ export async function verifyBaselineWorktree(directory: string, baseCommit: stri
  * so nothing in the user's own checkout changes. Safe to repeat: an existing directory is adopted only if it is a clean baseline.
  * The plugin never removes it; the work it holds is the run's artifact.
  */
+const worktreeSuffix = '.feature-pilot';
+/**
+ * The project directory a run worktree belongs to, or null for any other directory: the inverse of the path `createGitWorktree` builds
+ * (`<project>.feature-pilot/<run id>`). The host runs the plugin once per directory, so the instance serving a run's worktree needs this to find
+ * the project's selections, policy and spending limits.
+ */
+// shortcut: recognised by directory naming alone, so an unrelated directory that looks like `<x>.feature-pilot/<y>` is treated as a worktree of `<x>`.
+export function projectOfWorktree(directory: string): string | null {
+  const container = dirname(directory), name = basename(container);
+  return name.length > worktreeSuffix.length && name.endsWith(worktreeSuffix) ? join(dirname(container), name.slice(0, -worktreeSuffix.length)) : null;
+}
+
 export async function createGitWorktree(projectDir: string, runID: string, baseCommit: string, exec: Exec = defaultExec): Promise<{ directory: string }> {
   if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(baseCommit)) throw new Error('A full baseline commit hash is required');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(runID)) throw new Error('Invalid run ID for a worktree path');
-  const directory = join(dirname(projectDir), `${basename(projectDir)}.feature-pilot`, runID);
+  const directory = join(dirname(projectDir), `${basename(projectDir)}${worktreeSuffix}`, runID);
   await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
   try { await exec('git', ['worktree', 'add', '--detach', directory, baseCommit], { cwd: projectDir, timeout, env: cleanEnv(), maxBuffer: 1024 * 1024 }); }
   catch (error) {

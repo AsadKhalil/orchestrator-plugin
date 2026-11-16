@@ -6,6 +6,12 @@ export type Usd = string;
 export type ModelRef = { providerID: string; id: string; variant?: string };
 /** A model route exactly as the user selects it; `variant` null means the default reasoning configuration. */
 export type RouteRef = { providerID: string; id: string; variant: string | null };
+/**
+ * A variant as the host reports it, in a route's terms. The host names "no variant requested" `default` (observed on 2.2.7, even for a model that has
+ * no variants), while a route uses `null`; comparing them raw refuses every default-variant route.
+ */
+// shortcut: a model with a real variant literally named `default` is treated as having none, because the host reports both the same way.
+export const hostVariant = (variant: string | null | undefined): string | null => (variant === undefined || variant === 'default' ? null : variant);
 
 export type Evidence = { sourceURL: string; checkedAt: string; kind: 'official' | 'catalog' | 'provider_reported' | 'user_entered'; verified: boolean };
 export type BillingRoute = 'metered_api' | 'subscription' | 'local';

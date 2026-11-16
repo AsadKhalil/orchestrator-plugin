@@ -25,6 +25,24 @@ test('planner output can ask questions then propose a plan with recorded answers
   assert.equal(run.state, 'awaiting_approval');
 });
 
+test('a null read or write list is rejected, and the prompt tells the planner to use empty lists instead', () => {
+  // Observed live: a model wrote "write": null for a research step because the prompt only said "set resources to null if unknown", and the run paused with no usable explanation.
+  const run = newRun('r', 'Feature', 'base');
+  const withResources = (resources: unknown) => JSON.stringify({ kind: 'plan', plan: { steps: [{ ...step('Read the code'), resources }], acceptance: [criterion('y')], areas: ['src'], rollback: 'Revert changes', validationCommands: ['test'], questions: [] } });
+  assert.equal(applyPlannerOutput(run, 0, withResources({ read: ['src'], write: [] })).state, 'awaiting_approval', 'empty lists are fine');
+  assert.equal(applyPlannerOutput(run, 0, withResources(null)).state, 'awaiting_approval', 'an unknown resource set as a whole is fine');
+  assert.throws(() => applyPlannerOutput(run, 0, withResources({ read: ['src'], write: null })), /write resources/i);
+  assert.throws(() => applyPlannerOutput(run, 0, withResources({ read: null, write: [] })), /read resources/i);
+  assert.match(plannerPrompt(run).instructions, /\[\] for none, never null/);
+});
+
+test('the planner prompt says that only coder steps run, so approved plans are not built on steps nobody runs', () => {
+  // Observed live: a plan opened with a planner "design" step that the coder steps depended on; no stage runs such a step, so the approved plan paused at step_dependencies_unmet.
+  const instructions = plannerPrompt(newRun('r', 'Feature', 'base')).instructions;
+  assert.match(instructions, /only coder steps (are|run)/i);
+  assert.match(instructions, /no step may depend on (a )?(planner|reviewer)/i);
+});
+
 test('rejects malformed, unbounded and unexpected planner output', () => {
   const run = newRun('r', 'Feature', 'base');
   assert.throws(() => applyPlannerOutput(run, 0, 'not json'), /JSON/i);

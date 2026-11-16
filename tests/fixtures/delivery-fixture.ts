@@ -17,7 +17,7 @@ export const isolation = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.
 export const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env: { ...process.env, ...isolation }, encoding: 'utf8' }).trim();
 export const branch = 'feature-pilot/abcdef012345';
 export const runID = 'abcdef012345-run';
-export const title = 'Feature Pilot: Add the widget; "$(touch pwned)" `x`';
+export const title = 'Relay: Add the widget; "$(touch pwned)" `x`';
 
 /** A real repository with a bare remote. The reviewed work is a tracked edit plus an untracked file in a new directory. */
 export function fixture() {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { estimateTokenCost, formatUsd, parseUsd } from './costs.js';
 import type { Route } from './settings.js';
-import type { RateCard } from './types.js';
+import { hostVariant, type RateCard } from './types.js';
 
 type Maybe<T> = T | Promise<T>;
 export type Role = 'planner' | 'coder' | 'reviewer' | 'unknown';
@@ -11,7 +11,7 @@ export type RequestEvent = { sessionID: string; kind: 'primary' | 'compaction' |
 
 /** A request was refused before dispatch. `code` is stable for UI and tests; the message is safe to show. */
 export class SpendDenied extends Error {
-  constructor(readonly code: string, message: string) { super(`Feature Pilot spending controls: ${message}`); this.name = 'SpendDenied'; }
+  constructor(readonly code: string, message: string) { super(`Relay spending controls: ${message}`); this.name = 'SpendDenied'; }
 }
 
 /**
@@ -47,14 +47,14 @@ export function createSpendGuard(deps: GuardDeps) {
   return async (event: RequestEvent): Promise<void> => {
     const role = await deps.roleFor(event.sessionID);
     if (role === null) return;
-    if (role === 'unknown') throw new SpendDenied('unknown_role', 'Feature Pilot session has no recognised role');
+    if (role === 'unknown') throw new SpendDenied('unknown_role', 'Relay session has no recognised role');
     if (!event.model?.providerID || !event.model.id) throw new SpendDenied('invalid_request', 'The request names no model');
     const runID = await deps.runFor(event.sessionID);
-    if (!runID) throw new SpendDenied('unknown_run', 'Feature Pilot session is not attached to a run');
+    if (!runID) throw new SpendDenied('unknown_run', 'Relay session is not attached to a run');
     if (!await deps.selected(role, event.model)) throw new SpendDenied('model_not_selected', 'This model is not selected for the role');
     const ledger = deps.ledger();
     if (!ledger) throw new SpendDenied('ledger_unavailable', 'No atomic budget ledger is available on this host, so paid requests are refused');
-    const variant = event.model.variant ?? null, { maxOutputTokens, routes } = await deps.routes();
+    const variant = hostVariant(event.model.variant), { maxOutputTokens, routes } = await deps.routes();
     const route = routes.find(r => r.providerID === event.model.providerID && r.id === event.model.id && r.variant === variant);
     if (!route) throw new SpendDenied('rate_unknown', 'No rate card is recorded for this model route');
     const limit = await deps.limitFor(event.model);

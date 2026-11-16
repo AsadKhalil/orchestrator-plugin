@@ -12,8 +12,8 @@ To complete the host gate in an isolated profile:
 
 1. Configure the built local plugin in that profile's global `config/opencode/opencode.json`. Use a disposable project and synthetic provider; do not copy credentials from the user's normal profile.
 2. Start an independent Desktop instance with its test root and verify its server/config paths point to the disposable profile.
-3. Open a session, invoke **Open Feature Pilot** from the command palette, and verify panel loading, keyboard navigation, screen-reader labels, narrow width, long names, loading and error states.
-4. Select and remove planner, coder and reviewer variants; restart the isolated server and verify the selection remains scoped to the test project. Open a second window and check conflict/reload behavior.
+3. Open a session, invoke **Open Relay** from the command palette, and verify panel loading, keyboard navigation, screen-reader labels, narrow width, long names, loading and error states.
+4. In the Modes tab, add and remove Plan, Execute and Review models, write a "use it for" line, choose a decider and try a sample message (Try sends the sample to the decider's provider, so use a synthetic decision model unless the owner has said yes to a real one). Restart the isolated server and verify the settings remain and are the same in a second project. Open a second window and check conflict/reload behavior. The panel no longer edits the old pipeline's planner, coder and reviewer models.
 5. Exercise the opt-in price refresh. Confirm unknown and conditional prices are labelled, and that the action makes no model request. Record any failures in `compatibility.md`.
 
 Additional required gates include real permissions, cancellation, reconnect and the rest of the workflow described in the plan. A successful panel smoke test alone is insufficient for release.

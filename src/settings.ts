@@ -4,7 +4,7 @@ export type ModelChoice = { providerID: string; id: string; variant: string | nu
 export type Roles = { planner: ModelChoice[]; coder: ModelChoice[]; reviewer: ModelChoice[] };
 type Settings = { revision: number; roles: Roles };
 type Store = { get(key: string): Promise<unknown>; set(key: string, value: Settings): Promise<void>; compareAndSet?(key: string, expected: unknown, value: Settings): Promise<boolean> };
-type Model = { providerID: string; id: string; enabled: boolean; status: string; variants: readonly string[] };
+export type OfferedModel = { providerID: string; id: string; enabled: boolean; status: string; variants: readonly string[] };
 const roleNames = ['planner', 'coder', 'reviewer'] as const;
 const key = (directory: string) => `model-selections/${encodeURIComponent(directory)}`;
 const id = (choice: ModelChoice) => JSON.stringify([choice.providerID, choice.id, choice.variant]);
@@ -13,17 +13,25 @@ let queue: Promise<void> = Promise.resolve();
 export function serial<T>(task: () => Promise<T>): Promise<T> {
   const result = queue.then(task); queue = result.then(() => undefined, () => undefined); return result;
 }
+/** One list of model choices: every entry well formed, and none twice. */
+export function validateChoices(value: unknown): ModelChoice[] {
+  if (!Array.isArray(value)) throw new Error('Invalid role choices');
+  const seen = new Set<string>();
+  for (const choice of value) {
+    if (!choice || typeof choice !== 'object' || Array.isArray(choice) || Object.keys(choice).sort().join(',') !== 'id,providerID,variant' || typeof choice.providerID !== 'string' || !choice.providerID.trim() || typeof choice.id !== 'string' || !choice.id.trim() || !(choice.variant === null || (typeof choice.variant === 'string' && choice.variant.trim()))) throw new Error('Invalid model choice');
+    const identity = id(choice); if (seen.has(identity)) throw new Error('Duplicate model choice'); seen.add(identity);
+  }
+  return structuredClone(value);
+}
+/** The listed model a choice points at, when it can be used now: listed, enabled, not deprecated, and offering the chosen variant. */
+export function offered<M extends OfferedModel>(models: readonly M[], choice: ModelChoice): M | undefined {
+  const model = models.find(m => m.providerID === choice.providerID && m.id === choice.id);
+  return model && model.enabled && model.status !== 'deprecated' && (choice.variant === null || model.variants.includes(choice.variant)) ? model : undefined;
+}
 function validateRoles(value: unknown): Roles {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join(',') !== 'coder,planner,reviewer') throw new Error('Invalid roles');
   const roles = value as Roles;
-  for (const role of roleNames) {
-    if (!Array.isArray(roles[role])) throw new Error('Invalid role choices');
-    const seen = new Set<string>();
-    for (const choice of roles[role]) {
-      if (!choice || typeof choice !== 'object' || Array.isArray(choice) || Object.keys(choice).sort().join(',') !== 'id,providerID,variant' || typeof choice.providerID !== 'string' || !choice.providerID.trim() || typeof choice.id !== 'string' || !choice.id.trim() || !(choice.variant === null || (typeof choice.variant === 'string' && choice.variant.trim()))) throw new Error('Invalid model choice');
-      const identity = id(choice); if (seen.has(identity)) throw new Error('Duplicate model choice'); seen.add(identity);
-    }
-  }
+  for (const role of roleNames) validateChoices(roles[role]);
   return structuredClone(roles);
 }
 function decode(value: unknown, directory: string): Settings {
@@ -35,14 +43,13 @@ function decode(value: unknown, directory: string): Settings {
   return { revision: saved.revision, roles: validateRoles(saved.roles) };
 }
 export function getSelections(store: Store, directory: string): Promise<Settings> { return serial(async () => decode(await store.get(key(directory)), directory)); }
-export function saveSelections(store: Store, directory: string, revision: number, input: Roles, models: readonly Model[]): Promise<Settings> {
+export function saveSelections(store: Store, directory: string, revision: number, input: Roles, models: readonly OfferedModel[]): Promise<Settings> {
   return serial(async () => {
     const roles = validateRoles(input), raw = await store.get(key(directory)), previous = decode(raw, directory);
     if (!Number.isSafeInteger(revision) || revision !== previous.revision || revision === Number.MAX_SAFE_INTEGER) throw new Error('Stale settings revision');
     for (const role of roleNames) for (const choice of roles[role]) {
       if (previous.roles[role].some(old => id(old) === id(choice))) continue;
-      const model = models.find(m => m.providerID === choice.providerID && m.id === choice.id);
-      if (!model || !model.enabled || model.status === 'deprecated' || (choice.variant !== null && !model.variants.includes(choice.variant))) throw new Error('Selected model or variant is unavailable');
+      if (!offered(models, choice)) throw new Error('Selected model or variant is unavailable');
     }
     const saved = { revision: revision + 1, roles };
     if (typeof store.compareAndSet === 'function') {

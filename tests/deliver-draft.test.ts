@@ -45,6 +45,9 @@ test('an accepted run becomes a draft pull request, the record is saved, and a s
     assert.equal(first.status, 'delivered'); assert.equal(first.branch, branch); assert.equal(first.prUrl, 'https://github.com/example/widgets/pull/1'); assert.equal(first.reusedPR, false);
     assert.ok(gh(s.h).some(call => call.args.includes('--draft')), 'always a draft');
     assert.equal(gh(s.h).some(call => call.args.includes('merge')), false, 'never merges');
+    const create = gh(s.h).find(call => call.args.includes('create'))!;
+    assert.match(create.args[create.args.indexOf('--title') + 1], /^Relay: /, 'the pull request title uses the product name');
+    assert.match(s.h.state.bodies.join(' '), /Draft opened by Relay for run/, 'the pull request body does too');
     assert.equal(JSON.parse(String(s.store.data.get(deliveryRecordKey(s.run.id)))).phase, 'delivered');
     const second = await deliverDraft(s.env, s.run.id, s.run.revision, 'github');
     assert.equal(second.status, 'delivered'); assert.equal(second.reusedPR, true); assert.equal(s.h.state.prs.length, 1, 'no second pull request');
@@ -78,7 +81,7 @@ test('a local export is written beside the run worktrees, not inside the project
     const result = await deliverDraft(s.env, s.run.id, s.run.revision, 'local');
     assert.equal(result.status, 'exported'); assert.equal(result.paths.length, 2);
     for (const path of result.paths) assert.ok(path.startsWith(`${s.f.dir}.feature-pilot`) && existsSync(path), path);
-    assert.match(readFileSync(result.paths[1], 'utf8'), /Feature Pilot|requirement/i);
+    assert.match(readFileSync(result.paths[1], 'utf8'), /Relay|requirement/i);
     assert.equal(existsSync(join(s.f.dir, 'feature-pilot-' + s.run.id)), false);
   } finally { s.done(); }
 });

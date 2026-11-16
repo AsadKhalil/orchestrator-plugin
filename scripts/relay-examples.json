@@ -1,0 +1,50 @@
+{
+  "lines": {
+    "plan": [
+      "hard thinking: architecture, design, comparing options and trade-offs",
+      "understanding existing code: what it does, why it behaves this way, where something is"
+    ],
+    "execute": [
+      "small, quick edits: typos, renames, one-line fixes, config values",
+      "larger work: new features, refactors, changes across several files"
+    ],
+    "review": [
+      "security: secrets, auth, injection, permissions",
+      "correctness: bugs, edge cases, missing tests"
+    ]
+  },
+  "examples": [
+    { "text": "explain this", "agent": "build", "expect": "plan", "line": 2 },
+    { "text": "how would you fix this?", "agent": "build", "expect": "plan", "line": null, "nearMiss": true },
+    { "text": "why is login slow? @src/auth.ts", "agent": "build", "expect": "plan", "line": 2, "files": [{ "name": "src/auth.ts", "bytes": 5200 }] },
+    { "text": "what are the trade-offs between keeping sessions in redis and in postgres?", "agent": "plan", "expect": "plan", "line": 1 },
+    { "text": "should we split billing into its own service? give me the pros and cons", "agent": "build", "expect": "plan", "line": 1, "nearMiss": true },
+    { "text": "which of these two ways to fix the retry bug is safer?", "agent": "build", "expect": "plan", "line": 1, "nearMiss": true },
+    { "text": "what does the migration script change in the users table?", "agent": "build", "expect": "plan", "line": 2, "nearMiss": true },
+    { "text": "design a data model for team invitations with expiry and roles", "agent": "plan", "expect": "plan", "line": 1 },
+    { "text": "how should we restructure the checkout flow so it stops being flaky? compare two options", "agent": "build", "expect": "plan", "line": 1, "nearMiss": true },
+    { "text": "why does the fix for the timezone bug not work?", "agent": "build", "expect": "plan", "line": 2, "nearMiss": true },
+    { "text": "what would it take to move the public API from REST to gRPC?", "agent": "build", "expect": "plan", "line": 1, "nearMiss": true },
+
+    { "text": "Please find out why the login test fails and fix it.", "agent": "build", "expect": "execute", "line": null },
+    { "text": "Review this and fix it", "agent": "build", "expect": "execute", "line": null },
+    { "text": "ok, do it", "agent": "plan", "expect": "execute", "line": null, "followUp": true },
+    { "text": "rename getUser to fetchUser in api.ts", "agent": "build", "expect": "execute", "line": 1 },
+    { "text": "fix the typo in the README title", "agent": "build", "expect": "execute", "line": 1 },
+    { "text": "add CSV export to the reports page, with tests", "agent": "build", "expect": "execute", "line": 2 },
+    { "text": "yes, go ahead with the refactor you proposed across the three services", "agent": "plan", "expect": "execute", "line": 2, "followUp": true },
+    { "text": "bump the request timeout to 30 seconds in config.yaml", "agent": "build", "expect": "execute", "line": 1 },
+    { "text": "refactor the payment module to use the new client everywhere", "agent": "build", "expect": "execute", "line": 2 },
+    { "text": "run the unit tests and tell me which ones fail", "agent": "build", "expect": "execute", "line": null },
+    { "text": "looks right, apply it", "agent": "plan", "expect": "execute", "line": null, "followUp": true },
+
+    { "text": "review my changes for security problems before I push", "agent": "build", "expect": "review", "line": 1 },
+    { "text": "check this diff for bugs and missed edge cases", "agent": "build", "expect": "review", "line": 2, "files": [{ "name": "changes.diff", "bytes": 12400 }] },
+    { "text": "does this PR leak any API keys or tokens?", "agent": "build", "expect": "review", "line": 1, "files": [{ "name": "pr-482.patch", "bytes": 40100 }] },
+    { "text": "look over the new upload handler and tell me what is wrong with it, don't change anything", "agent": "build", "expect": "review", "line": 2, "nearMiss": true },
+    { "text": "is the SQL in reports.ts safe from injection?", "agent": "plan", "expect": "review", "line": 1 },
+    { "text": "before I merge: did my fix for the null check cover every caller?", "agent": "build", "expect": "review", "line": 2, "nearMiss": true },
+    { "text": "review the README wording for tone and clarity", "agent": "build", "expect": "review", "line": null },
+    { "text": "would this change break anything? just check, don't fix", "agent": "build", "expect": "review", "line": 2, "nearMiss": true }
+  ]
+}

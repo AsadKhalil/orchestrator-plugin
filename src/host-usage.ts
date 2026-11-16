@@ -3,6 +3,7 @@ import { Session } from '@opencode/schema/session';
 import type { Plugin } from '@opencode/plugin';
 import { aggregateUsage } from './usage.js';
 import { formatUsd, parseUsd } from './costs.js';
+import { hostVariant } from './types.js';
 
 type Row = Parameters<typeof aggregateUsage>[0][number];
 const prefix = 'owned-session/';
@@ -52,7 +53,7 @@ export async function readObservedUsage(context: Pick<Plugin.Context, 'location'
         if (message.type !== 'assistant') continue;
         if (!message.id || !message.model?.providerID || !message.model.id || !Number.isSafeInteger(message.time?.created)) { skippedMessages++; continue; }
         let startedAt: string; try { startedAt = new Date(message.time.created).toISOString(); } catch { skippedMessages++; continue; }
-        rows.push({ attemptID: JSON.stringify([sessionID, message.id]), revision: 0, startedAt, grossUsd: hostEstimate(message.cost), creditUsd: null, cashUsd: null, provenance: 'estimated', providerID: message.model.providerID, modelID: message.model.id, effort: typeof message.model.variant === 'string' && message.model.variant.trim() ? message.model.variant : null, role, projectID: context.location.directory });
+        rows.push({ attemptID: JSON.stringify([sessionID, message.id]), revision: 0, startedAt, grossUsd: hostEstimate(message.cost), creditUsd: null, cashUsd: null, provenance: 'estimated', providerID: message.model.providerID, modelID: message.model.id, effort: hostVariant(message.model.variant) || null, role, projectID: context.location.directory });
       }
     } catch { unavailableSessions++; }
   }

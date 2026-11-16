@@ -59,7 +59,7 @@ const quote = (text: string) => text.split(/\r?\n/).map(line => `> ${line}`).joi
 const usd = (value: Money) => value.unknownCount ? `at least $${value.knownUsd} known; ${value.unknownCount} attempt(s) unknown` : `$${value.knownUsd}`;
 
 function summaryText(report: ReturnType<typeof runReport>, costs: CostSection): string {
-  const out = [`# Feature Pilot run ${one(report.run.id)}`, '', `- State: ${report.run.state}`, `- Base commit: ${code(report.run.baseCommit)}`, `- Plan hash: ${report.planHash ? code(report.planHash) : 'none'}`, `- Approval: ${report.approval?.type ?? 'none'}`, '', '## Requirement', '', quote(report.requirement), ''];
+  const out = [`# Relay run ${one(report.run.id)}`, '', `- State: ${report.run.state}`, `- Base commit: ${code(report.run.baseCommit)}`, `- Plan hash: ${report.planHash ? code(report.planHash) : 'none'}`, `- Approval: ${report.approval?.type ?? 'none'}`, '', '## Requirement', '', quote(report.requirement), ''];
   if (report.clarification.length) out.push('## Clarifying questions', '', ...report.clarification.flatMap(q => [`- ${one(q.question)}`, `  - Answer: ${q.answer === null ? 'unanswered' : one(q.answer)}`]), '');
   if (report.plan) {
     out.push('## Approved plan', '', ...report.plan.steps.map(s => `- ${code(s.id)}: ${one(s.description)}`), '', '### Acceptance criteria', '', ...report.plan.acceptance.map(a => `- ${code(a.id)}: ${one(a.description)}`),
@@ -113,7 +113,7 @@ export function buildPullRequestBody(value: Run, costs: Costs, files: readonly s
   const advisories = last?.findings.filter(f => f.severity === 'advisory') ?? [];
   const total = costs?.total;
   const lines = [
-    `Draft opened by Feature Pilot for run ${code(run.id)}. **A human must review this change before it is merged.** Nothing has been merged or deployed.`,
+    `Draft opened by Relay for run ${code(run.id)}. **A human must review this change before it is merged.** Nothing has been merged or deployed.`,
     '', '## Acceptance criteria', '', ...(run.plan?.acceptance ?? []).map(a => `- ${code(a.id)}: ${one(a.description)}`),
     '', '## Changed files', '', ...(files.length ? files.slice(0, 200).map(f => `- ${code(f)}`) : ['- File list not provided.']), ...(files.length > 200 ? [`- ...and ${files.length - 200} more`] : []),
     '', '## Test evidence', '', ...(last ? last.validation.commands.map(c => `- ${code(c.command)} exited ${c.exitCode}`) : ['- None recorded.']),
@@ -216,7 +216,7 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
   } catch (error) { return refused(`Cannot verify the worktree: ${safe(error)}`); }
   if (!files.length) return refused('There are no changes to deliver');
 
-  const title = `Feature Pilot: ${one(run.requirement.replace(/[\u0000-\u001f\u007f]/g, ' ')).slice(0, 60)}`;
+  const title = `Relay: ${one(run.requirement.replace(/[\u0000-\u001f\u007f]/g, ' ')).slice(0, 60)}`;
   let known = deps.previous, commit = '', step = 'reading the local branch';
   const attention = (reason: string): DeliveryResult => ({ status: 'needs_attention', reason, record: known });
   const finish = async (prUrl: string, reusedPR: boolean): Promise<DeliveryResult> => {
@@ -251,7 +251,7 @@ export async function deliverRun(value: Run, destination: Destination, deps: Del
       if (JSON.stringify(listed(await git('diff', '--cached', '--no-ext-diff', '--no-color', '--numstat', '-z', run.baseCommit))) !== JSON.stringify(files)) return refused('The staged files differ from the reviewed files; nothing was committed');
       step = 'git commit';
       await git('checkout', '-b', branch);
-      await git('commit', '-q', '-m', title, '-m', `Feature Pilot run ${run.id}\nPlan hash: ${run.planHash}`);
+      await git('commit', '-q', '-m', title, '-m', `Relay run ${run.id}\nPlan hash: ${run.planHash}`);
       commit = await line('rev-parse', 'HEAD');
       if (`tree:${await line('rev-parse', 'HEAD^{tree}')}` !== reviewed.diffHash) return attention('The commit content differs from the reviewed content (a hook or filter changed it); nothing was pushed');
       known = { branch, commit, prUrl: null, phase: 'committed' };

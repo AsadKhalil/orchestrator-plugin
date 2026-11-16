@@ -66,7 +66,7 @@ test('attentionExplanation: null stays null, unknown reasons keep the raw code, 
   assert.match(attentionExplanation('brand_new_reason')!, /brand_new_reason/);
   assert.match(attentionExplanation('constructor')!, /constructor/, 'prototype keys fall back too');
   assert.match(attentionExplanation('review_limit_reached')!, /cannot be resumed/);
-  assert.match(attentionExplanation('coder_not_enabled')!, /Spending & permissions/);
+  assert.match(attentionExplanation('coder_not_enabled')!, /Spend tab/);
   assert.equal(attentionTitle('no_independent_reviewer'), 'no independent reviewer');
 });
 

@@ -1,6 +1,6 @@
 // Real-host smoke: pack the built plugin, install it into a disposable project, start the real OpenCode server in isolation and call the
 // plugin's RPC through the external client. No model request is made and no credential is used. Needs `npm run build` first and
-// FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.2.7 binary. It proves loading, RPC schemas, storage across a restart and the
+// FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary. It proves loading, RPC schemas, storage across a restart and the
 // pre-model behaviour of the driver; it does NOT prove the model workflow, permissions, the shell tool or the Desktop panel.
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';

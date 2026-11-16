@@ -19,10 +19,16 @@ import { projectRepository } from './drafts.js';
 import type { Exec } from './worktree.js';
 import type { createDriver } from './driver.js';
 import type { Schema } from 'effect';
+import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, type RelaySettings, type RelayStore } from './relay-store.js';
+import { checksStatus, linesFor, route } from './router.js';
+import { decide } from './decider.js';
 
 
 /** `driver` is created on first use; without it the panel can record drafts but not run them. */
-export function registerInventory(context: Pick<Plugin.Context, 'rpc' | 'location' | 'model' | 'storage' | 'session'>, runner?: { driver(): ReturnType<typeof createDriver>; exec?: Exec }, budgetHandle?: BudgetHandle) {
+export function registerInventory(context: Pick<Plugin.Context, 'rpc' | 'location' | 'model' | 'storage' | 'session' | 'experimental'>, runner?: { driver(): ReturnType<typeof createDriver>; exec?: Exec }, budgetHandle?: BudgetHandle) {
+  // Relay's settings are one set for every project; only the model lists come from this project's host.
+  const relayStore = context.storage as unknown as RelayStore;
+  const relayView = async (settings: RelaySettings, chat: Awaited<ReturnType<typeof listProjectModels>>, deciders: Awaited<ReturnType<typeof listProjectModels>>) => ({ directory: context.location.directory, settings, decisions: await recentDecisions(relayStore), deciders, checks: checksStatus(settings, chat) });
   const handle = budgetHandle ?? hostBudget(context.storage), ledger = () => handle.ledger;
   const budget = async (runID: string | null) => {
     if (runID !== null) await getDraft(context, runID);
@@ -77,6 +83,25 @@ export function registerInventory(context: Pick<Plugin.Context, 'rpc' | 'locatio
       return { directory: context.location.directory, ...await readObservedUsage(context, value.month, value.timeZone) };
     },
     listModels: async () => ({ directory: context.location.directory, models: await listProjectModels(context) }),
+    getRelay: async () => {
+      const [settings, chat, deciders] = await Promise.all([getRelaySettings(relayStore), listProjectModels(context), listProjectModels(context, 'decision')]);
+      return relayView(settings, chat, deciders);
+    },
+    saveRelay: async input => {
+      const { revision, ...next } = input as { revision: number; modes: unknown; decider: unknown };
+      const [chat, deciders] = await Promise.all([listProjectModels(context), listProjectModels(context, 'decision')]);
+      return relayView(await saveRelaySettings(relayStore, revision, next, chat, deciders), chat, deciders);
+    },
+    testDecider: async input => {
+      const text = (input as { text: string }).text;
+      if (!text.trim()) throw new Error('Type a sample message');
+      const [settings, models] = await Promise.all([getRelaySettings(relayStore), listProjectModels(context)]);
+      // The same path as /relay with nothing attached and no chat: the lines asked about and the pick come from the router.
+      const attachment = { needsImage: false, tokens: 0 };
+      const answer = await decide({ decisions: request => context.experimental.generate.decisions(request as never) }, settings.decider, { kind: 'chat', text, agent: null, files: [], images: 0, lines: linesFor(settings, models, attachment) });
+      const result = route(answer, settings, models, attachment, null);
+      return { directory: context.location.directory, mode: result.mode, confidence: answer.kind === 'answer' ? answer.confidence : null, model: result.switch ? modelName(result.model) : null, fit: result.switch ? result.fit : null, ms: answer.ms, costUsd: answer.kind === 'answer' ? answer.costUsd : null, note: result.note };
+    },
     refreshPrices: async () => ({ directory: context.location.directory, ...await refreshOpenRouterPrices({ get: () => context.storage.get('openrouter-price-cache'), set: value => context.storage.set('openrouter-price-cache', value as unknown as Schema.Json) }, fetch, new Date().toISOString(), true) }),
     recommendRoutes: async input => {
       const value = input as { role: 'planner' | 'coder' | 'reviewer'; runID: string | null; minimumScore: number; indexVersion: string; scores: Quality[]; workload: Workload; remainingBudget: string; needs: { image: boolean; tools: boolean } };

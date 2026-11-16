@@ -1,4 +1,5 @@
-/** Pure view-model helpers for the Feature Pilot panel. No framework or host imports, so they run under node:test. */
+/** Pure view-model helpers for the Relay panel. No framework or host imports, so they run under node:test. */
+import { parseUsd } from './costs.js';
 import type { Route } from './settings.js';
 
 export const autonomousNote = 'Approves its own plan and continues without waiting. Needs monthly and feature budgets with budget left.';
@@ -20,10 +21,10 @@ export const shouldPoll = (state: string) => active.includes(state);
 
 // ---- Attention ----
 const explanations: Record<string, string> = {
-  coder_not_enabled: 'Writing code is switched off. Turn on the coder in Spending & permissions (only in a disposable project), then resume.',
-  shell_not_enabled: 'Running the validation commands needs the coder switched on in Spending & permissions. Turn it on, then resume.',
+  coder_not_enabled: 'Writing code is switched off. Turn on the coder in the Spend tab (only in a disposable project), then resume.',
+  shell_not_enabled: 'Running the validation commands needs the coder switched on in the Spend tab. Turn it on, then resume.',
   shell_tool_unavailable: 'OpenCode did not offer a shell tool, so the validation commands could not run. Check this OpenCode setup, then resume.',
-  no_independent_reviewer: 'No reviewer qualifies. The reviewer must come from a vendor that did not plan or write the code, and its route needs a saved rate. Select such a reviewer and add its route in Spending & permissions, then resume.',
+  no_independent_reviewer: 'No reviewer qualifies. The reviewer must come from a vendor that did not plan or write the code, and its route needs a saved rate. Select such a reviewer and add its route in the Spend tab, then resume.',
   review_not_permitted: 'The review could not be started: the saved run did not accept the reviewer or the validation result. Check the reviewer selection, then resume.',
   review_limit_reached: 'The reviewer still found blocking problems after the allowed repair rounds. This is final: the run cannot be resumed. You can stop it.',
   review_state_invalid: 'The saved review record is inconsistent. Resume to try again; if it happens again, stop the run.',
@@ -40,8 +41,8 @@ const explanations: Record<string, string> = {
   worktree_missing: 'The run’s worktree is missing, so its changes cannot be read or validated. Resume to try again; if it persists, stop the run and start a new one.',
   worktree_changed_since_validation: 'Files in the worktree changed after validation passed, so the pending review no longer matches what was validated. Undo the change in the worktree, or stop the run.',
   diff_too_large_to_review: 'The changes are too large for one review request. Reduce the change in the run’s worktree and resume, or stop the run and start a smaller feature.',
-  no_route_for_planner: 'None of your selected planner models has a saved route with a rate. Add a route for one of them in Spending & permissions, then resume.',
-  no_route_for_coder: 'None of your selected coder models has a saved route with a rate. Add a route for one of them in Spending & permissions, then resume.',
+  no_route_for_planner: 'None of your selected planner models has a saved route with a rate. Add a route for one of them in the Spend tab, then resume.',
+  no_route_for_coder: 'None of your selected coder models has a saved route with a rate. Add a route for one of them in the Spend tab, then resume.',
   no_coder_step: 'The plan has no coding step for the coder to run. Stop the run and start a new one.',
   worktree_link_outside: 'A file in the worktree is a link that leads outside it, so the changes cannot be read safely for review. Remove the link in the worktree, or stop the run.',
   step_dependencies_unmet: 'A plan step depends on earlier work that can no longer be recorded as done on the current files, so it cannot run. Nothing was spent. Stop the run, or amend the plan so each coding step only depends on the step just before it.',
@@ -110,7 +111,7 @@ export function runActionError(error: unknown): string {
   return /stale/i.test(message) ? `${message}. The run changed, so its latest state is being reloaded.` : message;
 }
 
-// ---- Spending & permissions form ----
+// ---- Spend tab form (permission and prices) ----
 export const billingModes = ['metered_api', 'subscription', 'local'] as const;
 export const evidenceKinds = ['official', 'catalog', 'provider_reported', 'user_entered'] as const;
 /** Everything is text while editing; `interactive`, `conditions` and `verified` have no inputs and are kept exactly as saved. */
@@ -287,7 +288,7 @@ const exclusions: Record<string, string> = {
   inconsistent_cost: 'The estimated cost came out higher than the worst-case reservation, so the figures cannot be trusted.',
   budget: 'The worst-case reservation for one request is more than the remaining budget you entered.',
   cost_unknown: 'Its cost could not be worked out because a rate or limit is missing or unusable.',
-  no_rate_recorded: 'No rate is recorded for this route. Add one in Spending & permissions.',
+  no_rate_recorded: 'No rate is recorded for this route. Add one in the Spend tab.',
   billing_unbounded: 'The route is not metered API billing, so a dollar budget cannot bound it.',
   rate_conditions: 'Its rate has conditions (such as long-context tiers or batch pricing) that the estimate cannot model.',
   rate_stale: 'Its rate was checked more than 7 days ago, or its checked date is in the future. Re-check the provider’s price and update the route.',
@@ -311,7 +312,7 @@ export const publishWarning = 'Publishing pushes a new branch named after this r
 /** Only a run the person has accepted can be published; this is also enforced by the backend. */
 export const canPublish = (state: string) => state === 'accepted';
 export type DeliveryDraft = { publicationEnabled: boolean; remote: string; remoteURL: string; baseBranch: string; branchPrefix: string };
-export const emptyDelivery = (): DeliveryDraft => ({ publicationEnabled: false, remote: 'origin', remoteURL: '', baseBranch: 'main', branchPrefix: 'feature-pilot/' });
+export const emptyDelivery = (): DeliveryDraft => ({ publicationEnabled: false, remote: 'origin', remoteURL: '', baseBranch: 'main', branchPrefix: 'relay/' });
 type DeliverySettingsView = { publicationEnabled: boolean; github: { remote: string; remoteURL: string; baseBranch: string; branchPrefix: string } | null };
 export const deliveryFromSettings = (settings: DeliverySettingsView): DeliveryDraft => ({ publicationEnabled: settings.publicationEnabled, ...(settings.github ?? emptyDelivery()) });
 const plainName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) && !/\.\.|\/\/|\/\.|[./]$|\.lock$/.test(name);
@@ -321,7 +322,7 @@ export function deliveryProblems(draft: DeliveryDraft): string[] {
   if (!draft.publicationEnabled && !draft.remoteURL.trim()) return problems; // nothing to authorize
   if (!plainName(draft.remote.trim())) problems.push('Remote must be a plain name such as origin.');
   if (!plainName(draft.baseBranch.trim())) problems.push('Base branch must be a plain name such as main.');
-  if (!draft.branchPrefix.endsWith('/') || !plainName(`${draft.branchPrefix}x`)) problems.push('Branch prefix must be a plain name ending in /, such as feature-pilot/.');
+  if (!draft.branchPrefix.endsWith('/') || !plainName(`${draft.branchPrefix}x`)) problems.push('Branch prefix must be a plain name ending in /, such as relay/.');
   const url = draft.remoteURL.trim();
   if (!url) problems.push('Remote URL is required.');
   else if (url.length > 2000 || /\s/.test(url)) problems.push('Remote URL must be a single line.');
@@ -340,4 +341,42 @@ export function deliveryOutcome(result: DeliveredView): string {
   if (result.status === 'delivered') return `${result.reusedPR ? 'Draft pull request already existed' : 'Draft pull request opened'}: ${result.prUrl ?? '(no link)'} (branch ${result.branch ?? '?'}). Nothing was merged.`;
   if (result.status === 'needs_attention') return `Needs your attention: ${result.reason ?? 'unknown'}.${result.branch ? ` Branch ${result.branch}${result.commit ? ` at ${result.commit.slice(0, 12)}` : ''}${result.prUrl ? `, pull request ${result.prUrl}` : ''}.` : ''} Check the branch and pull request on the remote before trying again; nothing is retried automatically.`;
   return `Not delivered: ${result.reason ?? 'refused'}.`;
+}
+
+// ---- Compact layout helpers: what the progress strip, the status colour and the budget bar show. ----
+export const stages = ['Plan', 'Approve', 'Build', 'Review', 'Done'] as const;
+// shortcut: a paused or cancelled run does not remember where it stopped, so it gets no position in the strip rather than a guessed one.
+export function stageIndex(state: string): number | null {
+  switch (state) {
+    case 'clarifying': case 'planning': return 0;
+    case 'awaiting_approval': return 1;
+    case 'implementing': case 'validating': case 'repairing': return 2;
+    case 'reviewing': return 3;
+    case 'ready_for_acceptance': return 4;
+    case 'accepted': return 5;
+    default: return null;
+  }
+}
+export type Tone = 'busy' | 'wait' | 'ok' | 'warn' | 'idle';
+export const stateTone = (state: string): Tone => active.includes(state) ? 'busy' : state === 'needs_attention' ? 'warn' : state === 'accepted' ? 'ok' : state === 'cancelled' ? 'idle' : waiting.includes(state) ? 'wait' : 'idle';
+/** Whole percent of a limit already used, for a bar. Display only: null when there is no usable limit. */
+export function usedPercent(committed: string, limit: string | null): number | null {
+  try {
+    if (limit === null) return null;
+    const total = parseUsd(limit);
+    if (total === 0n) return null;
+    const used = (parseUsd(committed) * 100n) / total;
+    return used > 100n ? 100 : Number(used);
+  } catch { return null; }
+}
+/** An amount for reading, rounded to cents. The exact text stays available to the caller; this never feeds a calculation. */
+export function shortUsd(text: string | null): string {
+  if (text === null) return 'unknown';
+  let value: bigint;
+  try { value = parseUsd(text); } catch { return text; }
+  const cent = 10_000_000_000n;
+  if (value === 0n) return '$0';
+  if (value < cent / 2n) return '<$0.01';
+  const cents = (value + cent / 2n) / cent;
+  return `$${cents / 100n}.${(cents % 100n).toString().padStart(2, '0')}`;
 }

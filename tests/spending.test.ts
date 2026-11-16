@@ -62,6 +62,15 @@ test('an owned request reserves its ceiling and the ledger holds exactly that', 
   } finally { s.done(); }
 });
 
+test('the host reporting its default variant is the route with no variant, and a named variant stays a different route', async () => {
+  // Observed on a real 2.2.7 host: a model asked for with no variant is reported as variant "default", even when the model has no variants.
+  const s = setup();
+  try {
+    await assert.doesNotReject(ask(s.guard, 'ses_owned', { ...model, variant: 'default' }));
+    await assert.rejects(ask(s.guard, 'ses_owned', { ...model, variant: 'high' }), code('rate_unknown'));
+  } finally { s.done(); }
+});
+
 test('sessions the plugin does not own are never touched or reserved', async () => {
   const s = setup();
   try { await ask(s.guard, 'ses_someone_else'); assert.equal(s.ledger.snapshot().length, 0); } finally { s.done(); }

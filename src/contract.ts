@@ -36,6 +36,32 @@ const githubTarget = { type: 'object', properties: { remote: { type: 'string' },
 const deliveryBody = { publicationEnabled: { type: 'boolean' }, github: { anyOf: [{ type: 'null' }, githubTarget] } } as const;
 const deliveryOutput = { type: 'object', properties: { directory: { type: 'string' }, delivery: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, ...deliveryBody }, required: ['revision', 'publicationEnabled', 'github'], additionalProperties: false } }, required: ['directory', 'delivery'], additionalProperties: false } as const;
 const deliveredOutput = { type: 'object', properties: { directory: { type: 'string' }, status: { type: 'string', enum: ['exported', 'delivered', 'needs_attention', 'refused'] }, reason: nullableString, paths: { type: 'array', items: { type: 'string' } }, branch: nullableString, commit: nullableString, prUrl: nullableString, reusedPR: { anyOf: [{ type: 'boolean' }, { type: 'null' }] }, run: draftDetail }, required: ['directory', 'status', 'reason', 'paths', 'branch', 'commit', 'prUrl', 'reusedPR', 'run'], additionalProperties: false } as const;
+/** One model as the panel sees it: display fields only, never the host's record. Prices are USD for one million tokens; null is unknown. */
+const modelItem = {
+  type: 'object', properties: {
+    providerID: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' }, status: { type: 'string' },
+    variants: { type: 'array', items: { type: 'string' } },
+    capabilities: { type: 'object', properties: { input: { type: 'array', items: { type: 'string' } }, output: { type: 'array', items: { type: 'string' } }, tools: { type: 'boolean' } }, required: ['input', 'output', 'tools'], additionalProperties: false },
+    limit: { type: 'object', properties: { context: { type: 'number' }, output: { type: 'number' } }, required: ['context', 'output'], additionalProperties: false },
+    cost: { type: 'object', properties: { inputPerMillion: nullableString, outputPerMillion: nullableString, cacheReadPerMillion: nullableString, tiered: { type: 'boolean' } }, required: ['inputPerMillion', 'outputPerMillion', 'cacheReadPerMillion', 'tiered'], additionalProperties: false },
+  }, required: ['providerID', 'id', 'name', 'enabled', 'status', 'variants', 'capabilities', 'limit', 'cost'], additionalProperties: false,
+} as const;
+// ---- Relay: one set of settings for every project (the host shares plugin storage), the last decisions, and the panel's test box. ----
+const nullableNumber = { anyOf: [{ type: 'number' }, { type: 'null' }] } as const;
+const nullableMode = { anyOf: [{ type: 'string', enum: ['plan', 'execute', 'review'] }, { type: 'null' }] } as const;
+const nullableChoice = { anyOf: [choice, { type: 'null' }] } as const;
+/** A model chosen for a mode, with the person's "use it for" line. The line is optional in what the panel sends and always present in what comes back. */
+const modeChoice = { type: 'object', properties: { ...choice.properties, useFor: { type: 'string' } }, required: ['providerID', 'id', 'variant', 'useFor'], additionalProperties: false } as const;
+const modeChoiceInput = { type: 'object', properties: { ...choice.properties, useFor: { type: 'string' } }, required: ['providerID', 'id', 'variant'], additionalProperties: false } as const;
+const modeLists = { type: 'object', properties: { plan: { type: 'array', items: modeChoice }, execute: { type: 'array', items: modeChoice }, review: { type: 'array', items: modeChoice } }, required: ['plan', 'execute', 'review'], additionalProperties: false } as const;
+const modeListsInput = { type: 'object', properties: { plan: { type: 'array', items: modeChoiceInput }, execute: { type: 'array', items: modeChoiceInput }, review: { type: 'array', items: modeChoiceInput } }, required: ['plan', 'execute', 'review'], additionalProperties: false } as const;
+const decision = { type: 'object', properties: { at: { type: 'string' }, sessionID: { type: 'string' }, kind: { type: 'string', enum: ['chat', 'helper'] }, mode: nullableMode, confidence: nullableNumber, fit: nullableNumber, model: nullableString, ms: { type: 'number' }, costUsd: nullableString, note: nullableString }, required: ['at', 'sessionID', 'kind', 'mode', 'confidence', 'fit', 'model', 'ms', 'costUsd', 'note'], additionalProperties: false } as const;
+const relayOutput = { type: 'object', properties: {
+  directory: { type: 'string' },
+  settings: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, modes: modeLists, decider: nullableChoice }, required: ['revision', 'modes', 'decider'], additionalProperties: false },
+  decisions: { type: 'array', items: decision }, deciders: { type: 'array', items: modelItem },
+  checks: { type: 'object', properties: { active: { type: 'boolean' }, note: nullableString }, required: ['active', 'note'], additionalProperties: false },
+}, required: ['directory', 'settings', 'decisions', 'deciders', 'checks'], additionalProperties: false } as const;
 /** The host reports any exception thrown by a handler as an opaque "RPC call failed", so a refusal the panel must show is returned as this declared error instead. */
 const errors = { rejected: { type: 'object', properties: {}, additionalProperties: false } } as const;
 
@@ -75,17 +101,14 @@ export const FeaturePilot = Rpc.define({
     savePolicy: { errors, input: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, ...policyBody }, required: ['revision', 'maxOutputTokens', 'coderEnabled', 'routes'], additionalProperties: false }, output: policyOutput },
     getSelections: { errors, input: { type: 'object', properties: {}, additionalProperties: false }, output: response },
     saveSelections: { errors, input: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, roles }, required: ['revision', 'roles'], additionalProperties: false }, output: response },
+    getRelay: { errors, input: { type: 'object', properties: {}, additionalProperties: false }, output: relayOutput },
+    saveRelay: { errors, input: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, modes: modeListsInput, decider: nullableChoice }, required: ['revision', 'modes', 'decider'], additionalProperties: false }, output: relayOutput },
+    /** What Relay would do with a sample message: the mode after the 0.6 rule, the model it would pick, and the note. Nothing is switched, sent or recorded. */
+    testDecider: { errors, input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false }, output: { type: 'object', properties: { directory: { type: 'string' }, mode: nullableMode, confidence: nullableNumber, model: nullableString, fit: nullableNumber, ms: { type: 'number' }, costUsd: nullableString, note: nullableString }, required: ['directory', 'mode', 'confidence', 'model', 'fit', 'ms', 'costUsd', 'note'], additionalProperties: false } },
     listModels: {
       errors,
       input: { type: 'object', properties: {}, additionalProperties: false },
-      output: { type: 'object', properties: { directory: { type: 'string' }, models: { type: 'array', items: {
-        type: 'object', properties: {
-          providerID: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' }, status: { type: 'string' },
-          variants: { type: 'array', items: { type: 'string' } },
-          capabilities: { type: 'object', properties: { input: { type: 'array', items: { type: 'string' } }, output: { type: 'array', items: { type: 'string' } }, tools: { type: 'boolean' } }, required: ['input', 'output', 'tools'], additionalProperties: false },
-          limit: { type: 'object', properties: { context: { type: 'number' }, output: { type: 'number' } }, required: ['context', 'output'], additionalProperties: false },
-        }, required: ['providerID', 'id', 'name', 'enabled', 'status', 'variants', 'capabilities', 'limit'], additionalProperties: false,
-      } } }, required: ['directory', 'models'], additionalProperties: false },
+      output: { type: 'object', properties: { directory: { type: 'string' }, models: { type: 'array', items: modelItem } }, required: ['directory', 'models'], additionalProperties: false },
     },
   },
 });

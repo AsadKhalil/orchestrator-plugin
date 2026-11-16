@@ -1,8 +1,9 @@
-// Real-host model-turn smoke: the packed plugin in an isolated OpenCode 2.2.7 server talking to a FREE loopback mock provider.
+// Real-host model-turn smoke: the packed plugin in an isolated OpenCode 2.3.0 server talking to a FREE loopback mock provider.
 // It proves that, on a host without atomic storage, the local-file budget ledger lets a planner turn reach a model and that a budget too
 // small for the worst case stops a request before it is sent. No credential, paid provider or real profile is involved; the only key is a
-// synthetic string the mock checks. Needs `npm run build` and FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.2.7 binary.
-// It does NOT exercise the coder, reviewer, shell tool, permissions beyond the planner's, or the Desktop panel.
+// synthetic string the mock checks. Needs `npm run build` and FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary.
+// It also sends one `/relay` message in a normal chat on the mock model with no decider chosen (no switch, one request, one record).
+// It does NOT exercise the coder, reviewer, shell tool, permissions beyond the planner's, the Desktop panel, or a `/relay` switch (that needs a decision model).
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -31,11 +32,18 @@ const observed = []; const note = (label, value) => observed.push(`${label}: ${t
 
 // The mock provider: records each request and answers a planner question reply in the OpenAI-compatible streaming format.
 const requests = [];
+/** What each request looked like, cut short: enough to tell a chat turn from another kind of request, without the host's whole system text. */
+const shapes = [];
 const mock = createHttpServer((req, res) => {
   let body = ''; req.on('data', chunk => { body += chunk; });
   req.on('end', () => {
     let input = {}; try { input = JSON.parse(body); } catch { /* ignore */ }
-    if (req.url?.endsWith('/chat/completions')) requests.push({ model: input.model, effort: input.reasoning_effort, stream: input.stream, authorized: req.headers.authorization === `Bearer ${apiKey}` });
+    if (req.url?.endsWith('/chat/completions')) {
+      requests.push({ model: input.model, effort: input.reasoning_effort, stream: input.stream, authorized: req.headers.authorization === `Bearer ${apiKey}` });
+      const messages = Array.isArray(input.messages) ? input.messages : [];
+      const text = message => typeof message?.content === 'string' ? message.content : Array.isArray(message?.content) ? message.content.map(part => part?.text ?? '').join(' ') : '';
+      shapes.push({ model: input.model, roles: messages.map(message => message.role).join(','), tools: input.tools?.length ?? 0, system: text(messages.find(message => message.role === 'system')).slice(0, 60), last: text(messages.at(-1)).slice(0, 80) });
+    }
     const reply = JSON.stringify({ kind: 'questions', questions: [{ id: 'q1', question: 'Which option should the feature use?' }] });
     const base = { id: 'chatcmpl-smoke', object: 'chat.completion.chunk', created: 1, model: input.model };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
@@ -46,11 +54,12 @@ const mock = createHttpServer((req, res) => {
 });
 const mockPort = await free(); mock.listen(mockPort, '127.0.0.1'); await once(mock, 'listening');
 
+// Every run of the host binary, the version read included, gets the scratch directories, so nothing is read from or written to a real profile.
+const isolated = { ...baseEnv, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_CACHE_HOME: join(root, 'cache'), XDG_STATE_HOME: join(root, 'state'), OPENCODE_SERVER_PASSWORD: password, SMOKE_API_KEY: apiKey };
 let server;
 async function start() {
   const port = await free();
-  const env = { ...baseEnv, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_CACHE_HOME: join(root, 'cache'), XDG_STATE_HOME: join(root, 'state'), OPENCODE_SERVER_PASSWORD: password, SMOKE_API_KEY: apiKey };
-  const child = spawn(cli, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(cli, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: project, env: isolated, stdio: ['ignore', 'pipe', 'pipe'] });
   const instance = { child, log: '' };
   child.stdout.on('data', chunk => { instance.log += chunk.toString(); }); child.stderr.on('data', chunk => { instance.log += chunk.toString(); });
   const client = OpenCode.make({ baseUrl: `http://127.0.0.1:${port}`, headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` } });
@@ -81,7 +90,9 @@ try {
   await writeFile(join(project, 'opencode.json'), JSON.stringify({
     plugins: ['./node_modules/feature-pilot'],
     providers: { smoke: { name: 'Smoke', package: '@ai-sdk/openai-compatible', env: ['SMOKE_API_KEY'], settings: { baseURL: `http://127.0.0.1:${mockPort}/v1` },
-      models: { 'model-one': { name: 'Model One', limit: { context: 8000, output: 1000 }, variants: [{ id: 'high', settings: { reasoningEffort: 'high' } }] }, 'model-two': { name: 'Model Two', limit: { context: 8000, output: 1000 } } } } },
+      models: { 'model-one': { name: 'Model One', limit: { context: 8000, output: 1000 }, variants: [{ id: 'high', settings: { reasoningEffort: 'high' } }] }, 'model-two': { name: 'Model Two', limit: { context: 8000, output: 1000 } },
+        // A normal chat carries the host's whole system text and tools. In 8,000 tokens the host compacts before the first turn, so the /relay chat gets a model with room.
+        'model-chat': { name: 'Model Chat', limit: { context: 200000, output: 1000 } } } } },
   }));
   const { FeaturePilot } = await import(pathToFileURL(join(project, 'node_modules', 'feature-pilot', 'dist', 'rpc.js')).href);
   server = await start();
@@ -136,12 +147,38 @@ try {
   const after = await rpc().getBudget({ runID: funded.run.id }, options);
   assert.deepEqual([after.featureUsage.pendingCount, after.featureUsage.pendingUsd], [1, '0.039'], 'the reservation survived the restart');
 
-  console.log('PASS: on stock 2.2.7 the local-file ledger let one planner request reach the mock model, refused one that did not fit its budget, and kept the reservation across a restart');
+  // `/relay` in a normal chat with no decider chosen: the real host has the command, the message reaches the chat's own (mock) model once,
+  // the chat stays as it was, and the decision is recorded. The switch itself needs a decision model, which no mock can be, so it is not run here.
+  const chat = await server.client.session.create({ model: { providerID: 'smoke', id: 'model-chat' }, location: options.location, title: 'relay smoke' });
+  const before = requests.length;
+  const refusal = await server.client.session.command({ sessionID: chat.id, name: 'relay', text: ' ' }).then(() => null, error => error);
+  note('blank /relay was refused with', String(refusal?.message ?? refusal));
+  assert.match(`${refusal?.message} ${JSON.stringify(refusal)}`, /type your message after \/relay/);
+  await server.client.session.command({ sessionID: chat.id, name: 'relay', text: 'Say hello.' });
+  const answered = Date.now() + 240_000;
+  while (Date.now() < answered && requests.length === before) await sleep(300);
+  await server.client.experimental.session.wait({ sessionID: chat.id }); await sleep(1000);
+  assert.equal(requests.length, before + 1, `/relay made ${requests.length - before} model requests, expected exactly one`);
+  assert.deepEqual({ model: requests[before].model, authorized: requests[before].authorized }, { model: 'model-chat', authorized: true });
+  assert.ok(shapes[before].last.includes('Say hello.'), `the typed text did not arrive as the last message: ${shapes[before].last}`);
+  const relayed = await rpc().getRelay({}, options);
+  assert.deepEqual(relayed.decisions.map(item => [item.kind, item.sessionID, item.mode, item.model, item.note]), [['chat', chat.id, null, null, 'no decider chosen']]);
+  assert.deepEqual([relayed.settings.revision, relayed.checks], [0, { active: false, note: 'no decider chosen' }]);
+  note('decision models this host lists', relayed.deciders.map(model => `${model.providerID}/${model.id}`));
+  const idleFrom = Date.now(); await server.client.experimental.session.wait({ sessionID: chat.id });
+  note('wait on an idle chat took (ms)', Date.now() - idleFrom);
+  assert.ok(Date.now() - idleFrom < 5000, 'wait on an idle chat must return at once');
+  const settled = await server.client.session.get({ sessionID: chat.id });
+  assert.deepEqual([settled.model?.providerID, settled.model?.id], ['smoke', 'model-chat'], 'with no decider the chat stays on its own model');
+
+  const version = (await execFile(cli, ['--version'], { timeout: 20_000, env: isolated })).stdout.trim();
+  console.log(`PASS: on stock ${version} the local-file ledger let one planner request reach the mock model, refused one that did not fit its budget, and kept the reservation across a restart; /relay with no decider sent one message to the chat's own mock model and recorded it`);
   for (const line of observed) console.log(`OBSERVED ${line}`);
   console.log('LIMIT: mock provider only; no coder, reviewer, shell tool, worktree run, real pricing or Desktop panel was exercised');
 } catch (error) {
   for (const line of observed) console.error(`OBSERVED ${line}`);
   console.error(`MOCK REQUESTS: ${JSON.stringify(requests)}`);
+  console.error(`MOCK REQUEST SHAPES: ${JSON.stringify(shapes)}`);
   if (server) console.error(`SERVER LOG TAIL:\n${server.log.slice(-1800)}`);
   throw error;
 } finally {

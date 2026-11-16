@@ -8,6 +8,13 @@ type TokenCostInput = {
   outputRatePerMillion: string;
 };
 
+/** A price as the host reports it (a number of USD) becomes a USD string. Anything that is not a plain amount, or is too small to show in six decimals, is unknown. */
+export function usdString(value: unknown): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value >= 1e21) return null;
+  const text = value.toFixed(6).replace(/\.?0+$/, '');
+  return text === '0' && value !== 0 ? null : text;
+}
+
 export function parseUsd(value: string): bigint {
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,12})?$/.test(value)) throw new Error('Invalid USD amount');
   const [whole, fraction = ''] = value.split('.');

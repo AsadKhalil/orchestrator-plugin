@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { contentIdentity, snapshotDiff } from '../src/worktree.js';
+import { contentIdentity, projectOfWorktree, snapshotDiff } from '../src/worktree.js';
 
 const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim();
@@ -132,4 +132,13 @@ test('a rename is reported as its old and new path so every changed file is chec
     assert.deepEqual([...snap.files].sort(), ['new.txt', 'old.txt'], 'no empty path from a rename entry');
     assert.match(snap.patch, /new\.txt/); assert.match(snap.patch, /line1/, 'the renamed file content is in the patch');
   } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('projectOfWorktree is the inverse of the path createGitWorktree builds, and ignores every other directory', async () => {
+  const r = repo();
+  try {
+    const { directory } = await createGitWorktree(r.dir, 'run-1', r.base);
+    assert.equal(projectOfWorktree(directory), r.dir);
+    for (const other of [r.dir, join(r.dir, 'src'), join(r.dir, '..', 'plain', 'run-1'), join(r.dir, '..', '.feature-pilot', 'run-1')]) assert.equal(projectOfWorktree(other), null, other);
+  } finally { r.done(); rmSync(r.dir + '.feature-pilot', { recursive: true, force: true }); }
 });

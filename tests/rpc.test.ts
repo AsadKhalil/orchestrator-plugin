@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { registerInventory } from '../src/rpc.js';
+import { registerInventory, FeaturePilot } from '../src/rpc.js';
 import { newRun } from '../src/run.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openBudgetLedger } from '../src/budget-ledger.js';
+import { recordDecision } from '../src/relay-store.js';
 
 /** What the real host does with a handler: it supplies the typed-error factory, and the client sees a returned error as a rejected call (a thrown one only as "RPC call failed"). */
 class HostError extends Error { constructor(readonly type: string, message: string, readonly data: unknown) { super(message); } }
@@ -14,6 +15,22 @@ function asClient(handlers: unknown): any {
   return Object.fromEntries(Object.entries(handlers as Record<string, (input: unknown, call: unknown) => Promise<unknown>>).map(([name, handler]) => [name, async (input: unknown) => {
     const result = await handler(input, call); if (result instanceof HostError) throw result; return result;
   }]));
+}
+
+/** The real host refuses an output that does not fit the method's declared schema. This checks the shape keywords the contract uses and lists what does not fit. */
+function fits(schema: any, value: unknown, path = 'output'): string[] {
+  if (schema.anyOf) return schema.anyOf.some((option: unknown) => fits(option, value, path).length === 0) ? [] : [`${path}: fits no option`];
+  if (schema.enum && !schema.enum.includes(value)) return [`${path}: not one of ${schema.enum.join(', ')}`];
+  const type = value === null ? 'null' : Array.isArray(value) ? 'array' : schema.type === 'integer' && Number.isInteger(value) ? 'integer' : typeof value;
+  if (schema.type && type !== schema.type) return [`${path}: ${type}, not ${schema.type}`];
+  if (type === 'array') return (value as unknown[]).flatMap((item, index) => fits(schema.items ?? {}, item, `${path}[${index}]`));
+  if (type !== 'object') return [];
+  const properties = schema.properties ?? {}, object = value as Record<string, unknown>;
+  return [
+    ...(schema.required ?? []).filter((key: string) => !(key in object)).map((key: string) => `${path}.${key}: missing`),
+    ...Object.keys(object).filter(key => schema.additionalProperties === false && !(key in properties)).map(key => `${path}.${key}: not declared`),
+    ...Object.entries(object).flatMap(([key, item]) => properties[key] ? fits(properties[key], item, `${path}.${key}`) : []),
+  ];
 }
 
 test('budget settings require atomic storage and reject stale revisions', async () => {
@@ -52,6 +69,8 @@ test('registers a read-only inventory endpoint that does not return provider sec
   assert.equal(JSON.stringify(result).includes('hidden'), false);
   assert.equal((result as any).directory, '/repo');
   assert.equal((result as any).models[0].id, 'm');
+  assert.deepEqual((result as any).models[0].cost, { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, tiered: false });
+  assert.deepEqual(fits(FeaturePilot.methods.listModels.output, result), [], 'the real host refuses an output its contract does not declare');
 });
 
 test('settings RPC saves only available project routes and rejects stale edits', async () => {
@@ -244,4 +263,72 @@ test('getBudget names where the limits live, and the local file ledger enforces 
     await assert.rejects(handlers.setBudget({ scope: 'monthly', runID: null, amount: '20', revision: 0 }), { type: 'rejected', message: /stale/i });
     assert.deepEqual((await handlers.getBudget({ runID: null })).monthly, { amount: '12.5', revision: 1 });
   } finally { handle.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+// ---- Relay: the settings every project shares, and the panel's test box ----
+const relayHigh = { providerID: 'p', id: 'm', variant: 'high' }, relayDeep = { providerID: 'p', id: 'deep', variant: null }, relayJudge = { providerID: 'd', id: 'judge', variant: null };
+const noModes = { plan: [], execute: [], review: [] };
+const picked = (name: string, value: unknown, confidence: number) => ({ type: 'choice', name, choice: value, probabilities: [], confidence });
+/** Two project folders on one host: plugin storage is shared, the chat models are p/m (effort high) and p/deep, and the only decision model is d/judge. */
+function relayHost() {
+  const data = new Map<string, unknown>(), requests: any[] = [];
+  let reply: unknown = { answers: [picked('mode', 'review', 0.97)], cost: 0 };
+  const storage = { async get(key: string) { return structuredClone(data.get(key)); }, async set(key: string, value: unknown) { data.set(key, structuredClone(value)); } };
+  const listed = (providerID: string, id: string, variants: string[] = []) => ({ providerID, id, name: id, enabled: true, status: 'active', variants: variants.map(variant => ({ id: variant })), capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 1000, output: 10 }, cost: [{ input: 0.24, output: 0, cache: { read: 0, write: 0 } }], headers: { authorization: 'secret' } });
+  const connect = async (directory: string) => {
+    let handlers: any;
+    await registerInventory({
+      location: { directory }, storage, session: {},
+      model: { async list(input: { types?: string[] }) { return { data: input.types?.includes('decision') ? [listed('d', 'judge')] : [listed('p', 'm', ['high']), listed('p', 'deep')] }; } },
+      experimental: { generate: { async decisions(request: unknown) { requests.push(request); return reply; } } },
+      rpc: { async register(_d: unknown, h: unknown) { handlers = asClient(h); return { async dispose() {} }; } },
+    } as never);
+    return handlers;
+  };
+  return { storage, requests, connect, answer(next: unknown) { reply = next; } };
+}
+
+test('getRelay and saveRelay keep one set of settings for every project, and fit what they declare', async () => {
+  const host = relayHost(), one = await host.connect('/one'), two = await host.connect('/two');
+  const input = { revision: 0, modes: { ...noModes, review: [{ ...relayHigh, useFor: ' checks  for mistakes ' }, relayDeep] }, decider: relayJudge };
+  assert.deepEqual(fits(FeaturePilot.methods.saveRelay.input, input), [], 'what the panel sends fits the declared input');
+  const saved = await one.saveRelay(input);
+  assert.equal(saved.settings.revision, 1);
+  assert.deepEqual(saved.settings.modes.review, [{ ...relayHigh, useFor: 'checks for mistakes' }, { ...relayDeep, useFor: '' }]);
+  await recordDecision(host.storage, { at: '2026-11-14T00:00:00.000Z', sessionID: 'ses-1', kind: 'chat', mode: 'review', confidence: 0.97, fit: null, model: 'p/m#high', ms: 150, costUsd: '0', note: null });
+  const seen = await two.getRelay({});
+  assert.equal(seen.directory, '/two');
+  assert.deepEqual(seen.settings, saved.settings);
+  assert.deepEqual(seen.deciders.map((model: { providerID: string; id: string; cost: { inputPerMillion: string } }) => `${model.providerID}/${model.id} ${model.cost.inputPerMillion}`), ['d/judge 0.24']);
+  assert.deepEqual([seen.checks, seen.decisions.length, seen.decisions[0].model], [{ active: true, note: null }, 1, 'p/m#high']);
+  assert.equal(JSON.stringify(seen).includes('secret'), false);
+  assert.deepEqual([fits(FeaturePilot.methods.getRelay.output, seen), fits(FeaturePilot.methods.saveRelay.output, saved)], [[], []]);
+  await assert.rejects(one.saveRelay({ revision: 0, modes: noModes, decider: null }), { type: 'rejected', message: /stale/i });
+  await assert.rejects(one.saveRelay({ revision: 1, modes: noModes, decider: relayHigh }), { type: 'rejected', message: /decision model/i });
+  await assert.rejects(one.saveRelay({ revision: 1, modes: { ...noModes, plan: [{ ...relayHigh, useFor: 'x'.repeat(201) }] }, decider: relayJudge }), { type: 'rejected', message: /at most 200 characters/ });
+  const cleared = await two.saveRelay({ revision: 1, modes: noModes, decider: null });
+  assert.deepEqual([cleared.settings.revision, cleared.checks], [2, { active: false, note: 'no decider chosen' }]);
+});
+
+test('testDecider asks the chosen decider once and reports what Relay would do', async () => {
+  const host = relayHost(), one = await host.connect('/one');
+  await one.saveRelay({ revision: 0, modes: { ...noModes, review: [{ ...relayHigh, useFor: 'checks for mistakes' }, relayDeep] }, decider: relayJudge });
+  host.answer({ answers: [picked('mode', 'review', 0.97), picked('review_line', '1', 0.8)], cost: 0 });
+  const sure = await one.testDecider({ text: 'check my diff' });
+  assert.deepEqual({ ...sure, ms: 0 }, { directory: '/one', mode: 'review', confidence: 0.97, model: 'p/m#high', fit: 0.8, ms: 0, costUsd: '0', note: null });
+  assert.deepEqual(fits(FeaturePilot.methods.testDecider.output, sure), []);
+  assert.equal(host.requests.length, 1);
+  assert.deepEqual(host.requests[0].model, { providerID: 'd', id: 'judge' });
+  assert.deepEqual(host.requests[0].questions.map((question: { name: string }) => question.name), ['mode', 'review_line']);
+  assert.equal(/p\/m|deep|0\.24/.test(JSON.stringify(host.requests[0])), false, 'the decider is never told a model name or a price');
+  host.answer({ answers: [picked('mode', 'execute', 0.4)], cost: 0 });
+  const unsure = await one.testDecider({ text: 'hmm' });
+  assert.deepEqual({ ...unsure, ms: 0 }, { directory: '/one', mode: 'plan', confidence: 0.4, model: null, fit: null, ms: 0, costUsd: '0', note: 'not sure, so Plan; no model chosen for Plan' });
+  host.answer({ answers: [] });
+  const silent = await one.testDecider({ text: 'hello' });
+  assert.deepEqual({ ...silent, ms: 0 }, { directory: '/one', mode: null, confidence: null, model: null, fit: null, ms: 0, costUsd: null, note: "the decider's answer could not be read" });
+  assert.deepEqual([fits(FeaturePilot.methods.testDecider.output, unsure), fits(FeaturePilot.methods.testDecider.output, silent)], [[], []]);
+  await assert.rejects(one.testDecider({ text: '  ' }), { type: 'rejected', message: /sample message/i });
+  assert.equal(host.requests.length, 3);
+  assert.deepEqual((await one.getRelay({})).decisions, [], 'a try in the test box is not recorded');
 });

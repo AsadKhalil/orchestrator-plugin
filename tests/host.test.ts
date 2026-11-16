@@ -9,6 +9,19 @@ const models = async () => [
 ];
 const storage = { async set(_key: string, _value: string) {}, async get(_key: string): Promise<unknown> { return undefined; } };
 
+test('planner and reviewer sessions start deny-all, and only the planner gets the read-only tools its prompt tells it to use', async () => {
+  // Observed on a real 2.2.7 host: with a blanket deny and no allow rules the planner could not call read, glob or grep, so it invented tool names and the run failed.
+  const calls: unknown[] = [];
+  const host = createHost({ session: { async create(input) { calls.push(input); return { id: 'owned-' + calls.length }; } }, storage, listModels: models });
+  const model = { providerID: 'provider-a', id: 'model-a', variant: 'high' };
+  await host.prepareStage({ runID: 'run-1', role: 'planner', model });
+  await host.prepareStage({ runID: 'run-1', role: 'reviewer', model });
+  const permissions = (index: number) => (calls[index] as { permissions: unknown }).permissions;
+  const deny = { action: '*', resource: '*', effect: 'deny' };
+  assert.deepEqual(permissions(0), [deny, ...['read', 'glob', 'grep'].map(action => ({ action, resource: '*', effect: 'allow' }))]);
+  assert.deepEqual(permissions(1), [deny], 'the reviewer works from the supplied diff and gets no tools');
+});
+
 test('creates a stage with its selected model before any prompt', async () => {
   const calls: unknown[] = [];
   const host = createHost({ session: {
@@ -16,7 +29,7 @@ test('creates a stage with its selected model before any prompt', async () => {
   }, storage, listModels: models });
   const id = await host.prepareStage({ runID: 'run-1', role: 'planner', model: { providerID: 'provider-a', id: 'model-a', variant: 'high' } });
   assert.equal(id, 'owned-1');
-  assert.deepEqual(calls, [{ title: 'Feature Pilot: planner', model: { providerID: 'provider-a', id: 'model-a', variant: 'high' }, metadata: { featurePilotRunID: 'run-1', featurePilotRole: 'planner' }, permissions: [{ action: '*', resource: '*', effect: 'deny' }] }]);
+  assert.deepEqual(calls, [{ title: 'Relay: planner', model: { providerID: 'provider-a', id: 'model-a', variant: 'high' }, metadata: { featurePilotRunID: 'run-1', featurePilotRole: 'planner' }, permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }, { action: 'glob', resource: '*', effect: 'allow' }, { action: 'grep', resource: '*', effect: 'allow' }] }]);
 });
 
 test('rejects invalid model identity without creating a session', async () => {
