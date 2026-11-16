@@ -148,19 +148,21 @@ test('an unfinished planner turn is restarted only when its prompt was never sen
   } finally { running.done(); }
 });
 
-test('a link the coder plants in the worktree cannot pull an outside file into the reviewer prompt', async t => {
+test('a link the coder plants in the worktree stops the run before review, so no outside file reaches the reviewer', async t => {
   const secret = 'TOP-SECRET-OUTSIDE-CONTENT';
   const s = await setup({ onCoder: stage => {
     write(join(stage.work.directory, 'real.txt'), 'legit change\n');
-    write(join(s.parent, 'outside.txt'), `${secret}\n`);
-    try { symlinkSync(join(s.parent, 'outside.txt'), join(stage.work.directory, 'link.txt'), 'file'); } catch { stage.noSymlink = true; }
+    const outside = join(s.parent, 'outside'); mkdirSync(outside, { recursive: true }); write(join(outside, 'outside.txt'), `${secret}\n`);
+    // A file link needs an extra right on Windows; a folder junction does not, so some link is planted on every machine.
+    try { symlinkSync(join(outside, 'outside.txt'), join(stage.work.directory, 'link.txt'), 'file'); }
+    catch { try { symlinkSync(outside, join(stage.work.directory, 'jn'), 'junction'); } catch { stage.noLink = true; } }
   } });
   try {
     const run = await drive(s.repo, s.ports, 'run-1');
-    const prompt = [...s.fake.sessions.values()].find(item => item.role === 'reviewer')?.text ?? '';
-    if ([...s.fake.sessions.values()].some(item => item.noSymlink)) return t.skip('this account cannot create symlinks');
-    assert.ok(run.state === 'ready_for_acceptance' || prompt.length > 0, 'the review still ran');
-    assert.match(prompt, /legit change/); assert.equal(prompt.includes(secret), false, 'outside content must never reach the reviewer');
+    if ([...s.fake.sessions.values()].some(item => item.noLink)) return t.skip('this account cannot create links');
+    assert.equal(run.attention?.reason, 'worktree_link_outside', 'the worktree is refused rather than reviewed');
+    assert.equal([...s.fake.sessions.values()].some(item => item.role === 'reviewer' && item.text !== undefined), false, 'no review was sent');
+    assert.equal([...s.fake.sessions.values()].some(item => String(item.text ?? '').includes(secret)), false, 'outside content never reaches a model');
   } finally { s.done(); }
 });
 
