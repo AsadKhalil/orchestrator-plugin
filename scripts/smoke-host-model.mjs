@@ -2,7 +2,8 @@
 // It proves that, on a host without atomic storage, the local-file budget ledger lets a planner turn reach a model and that a budget too
 // small for the worst case stops a request before it is sent. No credential, paid provider or real profile is involved; the only key is a
 // synthetic string the mock checks. Needs `npm run build` and FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary.
-// It also sends one `/relay` message in a normal chat on the mock model with no decider chosen (no switch, one request, one record).
+// It also sends one `/relay` message in a normal chat on the mock model with no decider chosen (no switch, one request, one record), then
+// turns that chat's Relay switch on and off with `/relay on` and `/relay off` and checks what the `prompt` hook records.
 // It does NOT exercise the coder, reviewer, shell tool, permissions beyond the planner's, the Desktop panel, or a `/relay` switch (that needs a decision model).
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
@@ -171,8 +172,30 @@ try {
   const settled = await server.client.session.get({ sessionID: chat.id });
   assert.deepEqual([settled.model?.providerID, settled.model?.id], ['smoke', 'model-chat'], 'with no decider the chat stays on its own model');
 
+  // The switch: `/relay on` makes the `prompt` hook place every message of this chat; `/relay off` stops it. With no decider nothing is switched,
+  // but each placed message is recorded, and a `/relay` message is decided once, not twice. One model request for each message either way.
+  const records = async () => (await rpc().getRelay({}, options)).decisions.filter(item => item.sessionID === chat.id).length;
+  const send = async (work, label) => {
+    const from = requests.length; await work();
+    const until = Date.now() + 240_000; while (Date.now() < until && requests.length === from) await sleep(300);
+    await server.client.experimental.session.wait({ sessionID: chat.id }); await sleep(1000);
+    assert.equal(requests.length, from + 1, `${label}: ${requests.length - from} model requests, expected exactly one`);
+  };
+  await server.client.session.command({ sessionID: chat.id, name: 'relay', text: 'on' });
+  assert.equal((await rpc().getRelayChat({ sessionID: chat.id }, options)).on, true, '/relay on turned the switch on');
+  const before1 = await records();
+  await send(() => server.client.session.prompt({ sessionID: chat.id, text: 'A plain message with the switch on.' }), 'plain message, switch on');
+  assert.equal(await records(), before1 + 1, 'the hook placed and recorded the plain message');
+  await send(() => server.client.session.command({ sessionID: chat.id, name: 'relay', text: 'Say hi again.' }), '/relay with the switch on');
+  assert.equal(await records(), before1 + 2, 'a /relay message with the switch on is decided once');
+  await server.client.session.command({ sessionID: chat.id, name: 'relay', text: 'off' });
+  assert.equal((await rpc().getRelayChat({ sessionID: chat.id }, options)).on, false, '/relay off turned it off');
+  await send(() => server.client.session.prompt({ sessionID: chat.id, text: 'A plain message with the switch off.' }), 'plain message, switch off');
+  assert.equal(await records(), before1 + 2, 'with the switch off nothing is placed');
+  note('switch', 'on: one record per plain message, a /relay message decided once; off: none');
+
   const version = (await execFile(cli, ['--version'], { timeout: 20_000, env: isolated })).stdout.trim();
-  console.log(`PASS: on stock ${version} the local-file ledger let one planner request reach the mock model, refused one that did not fit its budget, and kept the reservation across a restart; /relay with no decider sent one message to the chat's own mock model and recorded it`);
+  console.log(`PASS: on stock ${version} the local-file ledger let one planner request reach the mock model, refused one that did not fit its budget, and kept the reservation across a restart; /relay with no decider sent one message to the chat's own mock model and recorded it; /relay on made the hook place each message once, and /relay off stopped it`);
   for (const line of observed) console.log(`OBSERVED ${line}`);
   console.log('LIMIT: mock provider only; no coder, reviewer, shell tool, worktree run, real pricing or Desktop panel was exercised');
 } catch (error) {

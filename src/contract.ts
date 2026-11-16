@@ -104,6 +104,8 @@ export const FeaturePilot = Rpc.define({
     getRelay: { errors, input: { type: 'object', properties: {}, additionalProperties: false }, output: relayOutput },
     saveRelay: { errors, input: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, modes: modeListsInput, decider: nullableChoice }, required: ['revision', 'modes', 'decider'], additionalProperties: false }, output: relayOutput },
     /** What Relay would do with a sample message: the mode after the 0.6 rule, the model it would pick, and the note. Nothing is switched, sent or recorded. */
+    getRelayChat: { errors, input: { type: 'object', properties: { sessionID: { type: 'string' } }, required: ['sessionID'], additionalProperties: false }, output: { type: 'object', properties: { on: { type: 'boolean' }, last: { anyOf: [decision, { type: 'null' }] } }, required: ['on', 'last'], additionalProperties: false } },
+    setRelayChat: { errors, input: { type: 'object', properties: { sessionID: { type: 'string' }, on: { type: 'boolean' } }, required: ['sessionID', 'on'], additionalProperties: false }, output: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'], additionalProperties: false } },
     testDecider: { errors, input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false }, output: { type: 'object', properties: { directory: { type: 'string' }, mode: nullableMode, confidence: nullableNumber, model: nullableString, fit: nullableNumber, ms: { type: 'number' }, costUsd: nullableString, note: nullableString }, required: ['directory', 'mode', 'confidence', 'model', 'fit', 'ms', 'costUsd', 'note'], additionalProperties: false } },
     listModels: {
       errors,

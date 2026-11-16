@@ -14,7 +14,7 @@ export type ModeChoice = ModelChoice & { useFor: string };
 export type RelaySettings = { revision: number; modes: Record<Mode, ModeChoice[]>; decider: ModelChoice | null };
 /** One routing decision. It never holds the message text or a file name. `fit` is how sure the decider was about the "use it for" line. */
 export type Decision = { at: string; sessionID: string; kind: 'chat' | 'helper'; mode: Mode | null; confidence: number | null; fit: number | null; model: string | null; ms: number; costUsd: string | null; note: string | null };
-export type RelayStore = { get(key: string): Promise<unknown>; set(key: string, value: RelaySettings | Decision[]): Promise<void>; compareAndSet?(key: string, expected: unknown, value: RelaySettings | Decision[]): Promise<boolean> };
+export type RelayStore = { get(key: string): Promise<unknown>; set(key: string, value: RelaySettings | Decision[] | boolean): Promise<void>; compareAndSet?(key: string, expected: unknown, value: RelaySettings | Decision[]): Promise<boolean> };
 
 const SETTINGS = 'relay/settings', DECISIONS = 'relay/decisions', KEEP = 20;
 const same = (a: ModelChoice, b: ModelChoice) => a.providerID === b.providerID && a.id === b.id && a.variant === b.variant;
@@ -84,3 +84,9 @@ export function recordDecision(store: RelayStore, decision: Decision): Promise<v
 }
 /** Newest first, at most 20. */
 export function recentDecisions(store: Pick<RelayStore, 'get'>): Promise<Decision[]> { return serial(async () => (await stored(store)).reverse()); }
+
+// The switch: whether every message in one chat goes through Relay. One key per chat, so turning it on or off is one write and needs no queue.
+const switchKey = (sessionID: string) => `relay/on/${encodeURIComponent(sessionID)}`;
+/** Only a stored `true` counts as on. */
+export async function chatSwitch(store: Pick<RelayStore, 'get'>, sessionID: string): Promise<boolean> { return (await store.get(switchKey(sessionID))) === true; }
+export function setChatSwitch(store: Pick<RelayStore, 'set'>, sessionID: string, on: boolean): Promise<void> { return store.set(switchKey(sessionID), on); }

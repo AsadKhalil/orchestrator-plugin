@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX } from '../src/relay-store.js';
+import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX, chatSwitch, setChatSwitch } from '../src/relay-store.js';
 import { getSelections } from '../src/settings.js';
 
 /** Whether a promise settles (either way) within `ms`, instead of hanging. */
@@ -89,6 +89,18 @@ test('the last 20 decisions are kept, newest first, and what cannot be read is l
   assert.deepEqual(await recentDecisions({ async get() { return 'garbage'; } }), []);
   const { fit: _fit, ...older } = { ...base, at: 'earlier' };
   assert.deepEqual(await recentDecisions({ async get() { return [older, 'garbage', { at: 1 }, { ...base, at: 'later', extra: 'x', mode: 'other' }]; } }), [{ ...base, at: 'later', mode: null }, { ...base, at: 'earlier', fit: null }]);
+});
+
+test("a chat's switch starts off, turns on and off, is per chat, and anything but true reads as off", async () => {
+  const db = store();
+  assert.equal(await chatSwitch(db, 'ses-1'), false);
+  await setChatSwitch(db, 'ses-1', true);
+  assert.deepEqual([await chatSwitch(db, 'ses-1'), await chatSwitch(db, 'ses-2')], [true, false]);
+  await setChatSwitch(db, 'ses-1', false);
+  assert.equal(await chatSwitch(db, 'ses-1'), false);
+  await setChatSwitch(db, 'a/b', true);
+  assert.deepEqual([...db.map.keys()], ['relay/on/ses-1', 'relay/on/a%2Fb']);
+  for (const odd of ['true', 1, {}, null]) assert.equal(await chatSwitch({ async get() { return odd; } }, 'x'), false, JSON.stringify(odd));
 });
 
 test('model names', () => { assert.equal(modelName(high), 'p/m#high'); assert.equal(modelName(judge), 'd/judge'); assert.equal(modelName(plain), 'p/m#high'); });

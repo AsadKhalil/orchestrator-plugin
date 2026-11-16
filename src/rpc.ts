@@ -19,7 +19,8 @@ import { projectRepository } from './drafts.js';
 import type { Exec } from './worktree.js';
 import type { createDriver } from './driver.js';
 import type { Schema } from 'effect';
-import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, type RelaySettings, type RelayStore } from './relay-store.js';
+import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, chatSwitch, setChatSwitch, type RelaySettings, type RelayStore } from './relay-store.js';
+const chatID = (input: unknown) => { const id = (input as { sessionID: string }).sessionID.trim(); if (!id) throw new Error('Name the chat'); return id; };
 import { checksStatus, linesFor, route } from './router.js';
 import { decide } from './decider.js';
 
@@ -91,6 +92,17 @@ export function registerInventory(context: Pick<Plugin.Context, 'rpc' | 'locatio
       const { revision, ...next } = input as { revision: number; modes: unknown; decider: unknown };
       const [chat, deciders] = await Promise.all([listProjectModels(context), listProjectModels(context, 'decision')]);
       return relayView(await saveRelaySettings(relayStore, revision, next, chat, deciders), chat, deciders);
+    },
+    // The pill: one chat's switch, and that chat's newest record.
+    getRelayChat: async input => {
+      const sessionID = chatID(input);
+      const [on, decisions] = await Promise.all([chatSwitch(relayStore, sessionID), recentDecisions(relayStore)]);
+      return { on, last: decisions.find(item => item.sessionID === sessionID) ?? null };
+    },
+    setRelayChat: async input => {
+      const sessionID = chatID(input), on = (input as { on: boolean }).on;
+      await setChatSwitch(relayStore, sessionID, on);
+      return { on };
     },
     testDecider: async input => {
       const text = (input as { text: string }).text;

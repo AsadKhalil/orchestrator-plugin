@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { relayCommand, isPicture, fileSize, localPath } from '../src/relay-command.js';
-import { recentDecisions } from '../src/relay-store.js';
+import { chatSwitch, recentDecisions } from '../src/relay-store.js';
 import { reviewRules } from '../src/router.js';
 import { entry, fakeRelay } from './relay-fakes.js';
 
@@ -16,7 +16,9 @@ const names = (f: Fake) => f.calls.map(call => call.name);
 const input = (f: Fake, name: string) => f.calls.find(call => call.name === name)?.input as any;
 const prompts = (f: Fake) => f.calls.filter(call => call.name === 'prompt').map(call => call.input);
 const last = async (f: Fake) => (await recentDecisions({ get: async key => structuredClone(f.data.get(key)) }))[0];
-const sent = [{ ...typed, sessionID: 'ses-1', delivery: 'steer' }];
+// Relay marks its own send, so the hook of a chat whose switch is on leaves it alone. The host stores the metadata and does not send it to the model.
+const sent = [{ ...typed, sessionID: 'ses-1', delivery: 'steer', metadata: { relay: 'sent' } }];
+const switchedOn = (f: Fake, sessionID = 'ses-1') => chatSwitch({ get: async key => structuredClone(f.data.get(key)) }, sessionID);
 const switches = (f: Fake) => names(f).filter(name => ['switchAgent', 'switchModel', 'put', 'remove'].includes(name));
 const sleep = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
 /** Whether a promise settles (either way) within `ms`, instead of hanging. */
@@ -106,6 +108,30 @@ test('blank text, a pipeline chat and a chat Relay cannot place are refused, and
   const g = fakeRelay({ owned: true }); await assert.rejects(run(g), /does not work in a chat that a Relay run created/);
   const h = fakeRelay({ fail: { owned: new Error('storage offline') } }); await assert.rejects(run(h), /storage offline/);
   assert.deepEqual([names(f), names(g), names(h)], [[], ['owned'], ['owned']]);
+});
+
+test('/relay on and /relay off turn the switch for this chat, in any case and with spaces around, and send nothing', async () => {
+  const f = fakeRelay();
+  for (const [text, on] of [['on', true], ['  OFF ', false], ['On', true], ['off', false], ['ON', true]] as const) {
+    await run(f, { ...typed, text, files: [] });
+    assert.equal(await switchedOn(f), on, JSON.stringify(text));
+  }
+  assert.deepEqual(prompts(f), []); assert.equal(names(f).includes('decisions'), false, 'a toggle asks the decider nothing');
+  assert.equal(await last(f), undefined, 'a toggle is not a decision');
+  assert.equal(await switchedOn(f, 'ses-2'), false, 'only this chat');
+  const g = fakeRelay({ owned: true });
+  await assert.rejects(run(g, { ...typed, text: 'on' }), /does not work in a chat that a Relay run created/);
+  assert.equal(await switchedOn(g), false);
+  const h = fakeRelay(); await run(h, { ...typed, text: 'on second thought, fix the login test' });
+  assert.deepEqual([prompts(h).length, await switchedOn(h)], [1, false], 'anything more than on or off is a message');
+});
+
+test('a toggle waits its turn in the chat, after a /relay message typed before it', async () => {
+  const f = fakeRelay({ busyMs: 20 });
+  const command = relayCommand(f.deps), go = (text: string) => command.execute({ sessionID: 'ses-1', prompt: { ...typed, text }, delivery: 'steer' } as never);
+  await Promise.all([go('fix the login test'), go('on')]);
+  const order = f.calls.filter(call => call.name === 'prompt' || (call.name === 'storageSet' && call.input === 'relay/on/ses-1')).map(call => call.name);
+  assert.deepEqual(order, ['prompt', 'storageSet']);
 });
 
 test('a chat already on the chosen agent and model is not switched again, and is not waited for either', async () => {

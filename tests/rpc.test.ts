@@ -310,6 +310,24 @@ test('getRelay and saveRelay keep one set of settings for every project, and fit
   assert.deepEqual([cleared.settings.revision, cleared.checks], [2, { active: false, note: 'no decider chosen' }]);
 });
 
+test("getRelayChat and setRelayChat read and turn one chat's switch, give that chat's last choice, and fit what they declare", async () => {
+  const host = relayHost(), one = await host.connect('/one');
+  const off = await one.getRelayChat({ sessionID: 'ses-1' });
+  assert.deepEqual(off, { on: false, last: null });
+  const input = { sessionID: 'ses-1', on: true };
+  assert.deepEqual(fits(FeaturePilot.methods.setRelayChat.input, input), [], 'what the pill sends fits the declared input');
+  const set = await one.setRelayChat(input);
+  assert.deepEqual(set, { on: true });
+  await recordDecision(host.storage, { at: '2026-11-16T00:00:01.000Z', sessionID: 'ses-1', kind: 'chat', mode: 'review', confidence: 0.9, fit: null, model: 'p/m#high', ms: 150, costUsd: '0', note: null });
+  await recordDecision(host.storage, { at: '2026-11-16T00:00:02.000Z', sessionID: 'ses-2', kind: 'chat', mode: 'plan', confidence: 0.9, fit: null, model: 'p/deep', ms: 150, costUsd: '0', note: null });
+  const seen = await (await host.connect('/two')).getRelayChat({ sessionID: 'ses-1' });
+  assert.deepEqual([seen.on, seen.last?.sessionID, seen.last?.model], [true, 'ses-1', 'p/m#high'], "this chat's newest record, read from any project folder");
+  assert.deepEqual([fits(FeaturePilot.methods.getRelayChat.output, seen), fits(FeaturePilot.methods.getRelayChat.output, off), fits(FeaturePilot.methods.setRelayChat.output, set)], [[], [], []]);
+  assert.deepEqual(await one.setRelayChat({ sessionID: 'ses-1', on: false }), { on: false });
+  assert.equal((await one.getRelayChat({ sessionID: 'ses-1' })).on, false);
+  await assert.rejects(one.setRelayChat({ sessionID: '  ', on: true }), { type: 'rejected', message: /chat/i });
+});
+
 test('testDecider asks the chosen decider once and reports what Relay would do', async () => {
   const host = relayHost(), one = await host.connect('/one');
   await one.saveRelay({ revision: 0, modes: { ...noModes, review: [{ ...relayHigh, useFor: 'checks for mistakes' }, relayDeep] }, decider: relayJudge });

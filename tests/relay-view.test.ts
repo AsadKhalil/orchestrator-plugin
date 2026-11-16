@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checksLine, decisionLine, priceLabel, privacyNote, tryLine } from '../src/relay-view.js';
+import { checksLine, decisionLine, pillView, priceLabel, privacyNote, switchHint, tryLine } from '../src/relay-view.js';
 import { buildDecisionRequest, MAX_CHARS, MAX_FILE_NAMES } from '../src/decider.js';
 
 const chat = { kind: 'chat' as const, mode: 'execute' as const, model: 'p/exec#high' as string | null, confidence: 0.98 as number | null, fit: null as number | null, ms: 150, note: null as string | null };
@@ -39,6 +39,17 @@ test('the panel says what is sent to the decider and to whom, with the limits th
   assert.deepEqual(request.input, [{ type: 'text', text: 'The person\'s message: "fix the test"\nThe chat is on the agent: build. Attached files: notes.txt (2 kB). Attached pictures: 2.' }]);
   assert.deepEqual(request.questions.map(question => question.name), ['mode', 'plan_line']);
   assert.deepEqual(request.questions[1].choices.map(choice => choice.description), ['deep design', 'quick questions', 'None of these fits clearly.']);
+});
+
+test('the pill says whether every message in this chat goes through Relay, offers to turn it, and shows the last choice there', () => {
+  assert.deepEqual(pillView({ on: false, last: null }), { label: 'Relay off', tone: undefined, rows: [{ id: 'toggle', label: 'Turn Relay on for this chat' }, { id: 'last', label: 'No choice in this chat yet.' }] });
+  const on = pillView({ on: true, last: chat });
+  assert.deepEqual([on.label, on.tone, on.rows[0].label, on.rows[1].label, on.rows[1].tone], ['Relay on', 'success', 'Turn Relay off for this chat', 'Last choice: Execute, p/exec#high, 98% sure, 150 ms.', undefined]);
+  assert.equal(pillView({ on: true, last: { ...chat, model: null, note: 'the chat was still busy after 0.3 seconds' } }).rows[1].tone, 'warning', 'nothing was switched');
+});
+
+test('the Modes tab says how to turn Relay on for every message in one chat', () => {
+  assert.equal(switchHint, 'To send every message in one chat through Relay, type /relay on in that chat or use the Relay pill above its chat box; /relay off turns it off. In the terminal app, /relay on and /relay off work the same way, without the pill.');
 });
 
 test('the panel says whether helpers that check work get a Review model', () => {

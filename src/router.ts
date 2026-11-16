@@ -77,9 +77,12 @@ export function pickModel(usable: readonly ModeChoice[], line: LineAnswer | unde
   return kept ? { model: plain(kept), fit: null, note: `${reason}, so the chat's model stays` } : { model: plain(usable[0]), fit: null, note: `${reason}, so the first model is used` };
 }
 
-export function route(answer: DeciderAnswer, settings: Pick<RelaySettings, 'modes'>, models: readonly RoutableModel[], attachment: Attachment, current: ModelChoice | null): RouteResult {
+/** `unsure` says what an answer under UNSURE_BELOW means: Plan for `/relay`, no change for a chat whose switch is on. */
+export function route(answer: DeciderAnswer, settings: Pick<RelaySettings, 'modes'>, models: readonly RoutableModel[], attachment: Attachment, current: ModelChoice | null, unsure: 'plan' | 'stay' = 'plan'): RouteResult {
   if (answer.kind === 'none') return { switch: false, mode: null, note: answer.reason };
-  const unsure = answer.confidence < UNSURE_BELOW, mode: Mode = unsure ? 'plan' : answer.mode, notes = unsure ? ['not sure, so Plan'] : [];
+  const doubtful = answer.confidence < UNSURE_BELOW;
+  if (doubtful && unsure === 'stay') return { switch: false, mode: null, note: 'not sure, so the chat stays as it is' };
+  const mode: Mode = doubtful ? 'plan' : answer.mode, notes = doubtful ? ['not sure, so Plan'] : [];
   const { usable, note } = candidates(mode, settings.modes[mode], models, attachment);
   if (note !== null) return { switch: false, mode, note: [...notes, note].join('; ') };
   const chosen = pickModel(usable, answer.lines[mode], current);

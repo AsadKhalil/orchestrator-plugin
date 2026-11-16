@@ -117,7 +117,7 @@ test('refuses every owned request kind without an atomic budget ledger and leave
   const ctx = {
     storage: { async scan() { return { entries: [{ key: 'owned-session/ses-a', value: 'run-a' }] }; }, async get(key: string) { return key === 'owned-role/ses-a' ? 'planner' : undefined; } },
     permission: { async hook() { return { async dispose() {} }; } },
-    session: { async hook(name: string, callback: (event: any) => Promise<void>) { if (name === 'experimental.model.resolve') modelHook = callback; else assert.equal(name, 'retry'); return { async dispose() {} }; } },
+    session: { async hook(name: string, callback: (event: any) => Promise<void>) { if (name === 'experimental.model.resolve') modelHook = callback; else assert.ok(['retry', 'prompt'].includes(name), `unexpected session hook ${name}`); return { async dispose() {} }; } },
   };
   const cleanup = await plugin.setup(withSessionHook(ctx) as never);
   assert.ok(modelHook);
@@ -144,7 +144,7 @@ test('rolls back permission and request hooks if inventory RPC registration fail
     rpc: { async register() { throw new Error('RPC failed'); } },
   };
   await assert.rejects(async () => plugin.setup(withSessionHook(ctx) as never), /RPC failed/);
-  assert.deepEqual(disposed.sort(), ['permission', 'request', 'request']);
+  assert.deepEqual(disposed.sort(), ['permission', 'request', 'request', 'request'], 'the spend guard, retry and switch hooks are all removed');
 });
 
 test('runtime refuses to prepare a model outside the saved role selection', async () => {
@@ -269,6 +269,7 @@ test('uses marked metadata when ownership storage is unavailable', async () => {
 /** A host that keeps what the plugin adds as commands. The host runs the callback again whenever it rebuilds its commands, so the fake runs it twice. */
 function commandHost(records: Map<string, unknown>) {
   const added: any[] = [], prompts: unknown[] = [], hooks: { name: string; handler: (event: any) => Promise<void> }[] = [], asked: any[] = []; let disposed = 0;
+  const sessionHooks: { name: string; handler: (event: any) => Promise<void>; disposed: boolean }[] = [];
   const ctx = withSessionHook({
     location: { directory: '/project' },
     storage: { async get(key: string) { return records.get(key); }, async set(key: string, value: unknown) { records.set(key, value); }, async scan() { return { entries: [...records].filter(([key]) => key.startsWith('owned-session/')).map(([key, value]) => ({ key, value })) }; } },
@@ -277,18 +278,36 @@ function commandHost(records: Map<string, unknown>) {
     tool: { async hook(name: string, handler: (event: any) => Promise<void>) { hooks.push({ name, handler }); return { async dispose() { disposed++; } }; } },
     model: { async list() { return { data: [{ providerID: 'p', id: 'm', name: 'M', enabled: true, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 100, output: 10 } }] }; } },
     experimental: { generate: { async decisions(request: unknown) { asked.push(request); return { answers: [{ type: 'choice', name: 'mode', choice: 'review', probabilities: [], confidence: 0.95 }], cost: 0 }; } } },
-    session: { async prompt(input: unknown) { prompts.push(input); } },
+    session: {
+      async prompt(input: unknown) { prompts.push(input); },
+      async hook(name: string, handler: (event: any) => Promise<void>) { const entry = { name, handler, disposed: false }; sessionHooks.push(entry); return { async dispose() { entry.disposed = true; } }; },
+    },
   });
-  return { ctx, added, prompts, hooks, asked, disposed: () => disposed };
+  return { ctx, added, prompts, hooks, asked, sessionHooks, disposed: () => disposed };
 }
 
-test('registers /relay and the helper hook once and disposes both', async () => {
+test('registers /relay, the helper hook and the switch hook once and disposes them', async () => {
   const host = commandHost(new Map());
   const cleanup = await plugin.setup(host.ctx as never);
   assert.deepEqual(host.added.map(command => [command.name, typeof command.description, typeof command.execute]), [['relay', 'string', 'function']]);
   assert.deepEqual(host.hooks.map(hook => hook.name), ['execute.before']);
+  assert.equal(host.sessionHooks.filter(hook => hook.name === 'prompt').length, 1, 'one prompt hook for the switch');
   await cleanup?.();
   assert.equal(host.disposed(), 2);
+  assert.equal(host.sessionHooks.every(hook => hook.disposed), true);
+});
+
+test('the switch hook as registered places a message in a chat whose switch is on, and leaves other chats alone', async () => {
+  const records = new Map<string, unknown>([['relay/settings', { revision: 1, modes: { plan: [], execute: [], review: [{ providerID: 'p', id: 'm', variant: null, useFor: '' }] }, decider: { providerID: 'd', id: 'judge', variant: null } }], ['relay/on/ses-b', true]]), host = commandHost(records);
+  await plugin.setup(host.ctx as never);
+  const prompt = host.sessionHooks.find(hook => hook.name === 'prompt')!;
+  await prompt.handler({ sessionID: 'ses-c', messageID: 'm1', delivery: 'steer', prompt: { text: 'Check the diff for mistakes.' } });
+  assert.equal(host.asked.length, 0, 'switch off: no decider request');
+  await prompt.handler({ sessionID: 'ses-b', messageID: 'm2', delivery: 'steer', prompt: { text: 'Check the diff for mistakes.' } });
+  assert.equal(host.asked.length, 1);
+  await new Promise(done => setTimeout(done, 20));   // the record is written after the hook returns
+  assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.kind, item.sessionID, item.mode]), [['chat', 'ses-b', 'review']]);
+  assert.deepEqual(host.prompts, [], 'the hook never sends');
 });
 
 test('the helper hook as registered asks the host\'s decision call and gives a checking helper the Review model', async () => {
@@ -307,6 +326,6 @@ test('/relay as registered refuses a chat that a run created, and sends a normal
   const relay = host.added[0];
   await assert.rejects(relay.execute({ sessionID: 'ses-a', prompt: { text: 'hi' }, delivery: 'steer' }), /does not work in a chat that a Relay run created/);
   await relay.execute({ sessionID: 'ses-b', prompt: { text: 'hi' }, delivery: 'queue' });
-  assert.deepEqual(host.prompts, [{ text: 'hi', sessionID: 'ses-b', delivery: 'queue' }]);
+  assert.deepEqual(host.prompts, [{ text: 'hi', sessionID: 'ses-b', delivery: 'queue', metadata: { relay: 'sent' } }]);
   assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.kind, item.sessionID, item.mode, item.note]), [['chat', 'ses-b', null, 'no decider chosen']]);
 });

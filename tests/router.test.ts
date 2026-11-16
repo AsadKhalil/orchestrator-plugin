@@ -20,6 +20,12 @@ test('each mode gets its agent, and a mode with one model gets that model', () =
   assert.deepEqual([modeLabel('plan'), modeLabel('execute'), modeLabel('review')], ['Plan', 'Execute', 'Review']);
 });
 
+test('with the switch on, an unsure answer leaves the chat as it is', () => {
+  assert.deepEqual(route(sure('execute', 0.59), settings, models, nothing, null, 'stay'), { switch: false, mode: null, note: 'not sure, so the chat stays as it is' });
+  assert.equal((route(sure('execute', 0.6), settings, models, nothing, null, 'stay') as { agent: string }).agent, 'build', '0.6 itself is sure');
+  assert.deepEqual(route(sure('execute', 0.59), settings, models, nothing, null, 'plan'), route(sure('execute', 0.59), settings, models, nothing, null), '/relay keeps its own rule');
+});
+
 test('confidence below 0.6 gives Plan, and 0.6 itself does not', () => {
   assert.equal(UNSURE_BELOW, 0.6);
   assert.deepEqual(route(sure('execute', 0.59), settings, models, nothing, null), { switch: true, mode: 'plan', agent: 'plan', model: pick('plan'), fit: null, note: 'not sure, so Plan' });

@@ -15,6 +15,7 @@ import { createDriver } from './driver.js';
 import { projectOfWorktree } from './worktree.js';
 import { relayCommand, fileSize, type RelayDeps } from './relay-command.js';
 import { reviewHelperHook } from './review-helper.js';
+import { relayAutoHook } from './relay-auto.js';
 import { decide } from './decider.js';
 import type { RelayStore } from './relay-store.js';
 
@@ -129,6 +130,9 @@ export async function createRuntime(context: Plugin.Context) {
       // A helper whose task is a check of work starts on a Review model. The hook sees every tool call and leaves all others alone.
       const helper = await context.tool.hook('execute.before', reviewHelperHook(relayDeps));
       disposers.push(() => helper.dispose());
+      // The switch: in a chat where `/relay on` turned it on, every message is placed before it goes out. The hook sees every message and never throws.
+      const auto = await context.session.hook('prompt', relayAutoHook(relayDeps));
+      disposers.push(() => auto.dispose());
       // Built on first use so a plugin that only lists models never touches git or worktrees.
       let driver: ReturnType<typeof createDriver> | undefined;
       const runner = { driver: () => driver ??= (() => {

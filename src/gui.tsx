@@ -1,11 +1,11 @@
 import { For, Index, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from 'solid-js';
-import { Command, Panel, Plugin, type PanelTab } from '@opencode/plugin/gui';
+import { Command, ComposerPill, Panel, Plugin, type MountedSession, type PanelTab } from '@opencode/plugin/gui';
 import { FeaturePilot } from './contract.js';
 import { offered, type ModelChoice, type Policy } from './settings.js';
 import type { ModelCostView } from './inventory.js';
 import { USE_FOR_MAX, type Decision, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
 import { modeLabel, reviewRules } from './router.js';
-import { checksLine, decisionLine, priceLabel, privacyNote, tryLine } from './relay-view.js';
+import { checksLine, decisionLine, pillView, priceLabel, privacyNote, switchHint, tryLine } from './relay-view.js';
 import { canPublish, deliveryFromSettings, deliveryOutcome, deliveryProblems, deliveryRequest, emptyDelivery, publishWarning, type DeliveryDraft } from './gui-model.js';
 import { attentionExplanation, attentionTitle, autonomousNote, availableActions, billingModes, budgetBackendNote, coderWarning, describeError, emptyRoute, evidenceKinds, parseTokenLimit, policyProblems, routeFromPolicy, routeToPolicy, runActionError, shouldPoll, stateLabel, truncate, verdictLabel, buildRecommendRequest, emptyRecommendDraft, emptyScore, emptySettle, evidenceLabel, exclusionExplanation, recommendError, recommendProblems, recommendRoles, recommendationNote, reservationWarning, settleProblems, settleRequest, shortUsd, stageIndex, stages, stateTone, usedPercent, type RecommendDraft, type ScoreDraft, type SettleDraft, type RouteDraft } from './gui-model.js';
 import { compareMonthlyScenario } from './comparison.js';
@@ -548,6 +548,7 @@ export default Plugin.define({
                   <Show when={tried()?.session === props.session ? tried() : undefined}>{shown => <div class={`rl-note ${shown().bad ? 'n-bad' : ''}`} role="status">{shown().text}</div>}</Show>
                   <span class="rl-hint" aria-live="polite">{decisionLine(data()?.relay.decisions[0])}</span>
                   <span class="rl-hint">{data() ? checksLine(data()!.relay.checks) : ''}</span>
+                  <span class="rl-hint">{switchHint}</span>
                 </div>
                 <Acc title="Review rules" sub="added to every review"><pre class="rl-pre">{reviewRules}</pre></Acc>
                 <div class="rl-row"><span class="rl-hint" aria-live="polite">{response.loading ? 'Loading…' : `${result()?.length ?? 0} models available`}{saving() ? ' · saving…' : ''}</span><button type="button" class="rl-btn sm" disabled={response.loading} onClick={() => void refetch()}>Refresh</button></div>
@@ -727,5 +728,44 @@ export default Plugin.define({
         </section>;
       },
     });
+
+    // The pill above each chat box: whether every message in that chat goes through Relay, the row that turns it, and the chat's last choice.
+    // shortcut: it asks the server again every 5 seconds for the chats shown in the last 15; a server event would do better if OpenCode gives plugins one.
+    const [chats, setChats] = createSignal<Record<string, { on: boolean; last: Decision | null }>>({});
+    const seen = new Map<string, { session: MountedSession; at: number }>();
+    const relayOf = (session: MountedSession) => ({ rpc: session.server.client.rpc(FeaturePilot), options: { location: { directory: session.directory } } });
+    const refresh = async (session: MountedSession) => {
+      try {
+        const { rpc, options } = relayOf(session);
+        const value = await rpc.getRelayChat({ sessionID: session.id }, options) as { on: boolean; last: Decision | null };
+        setChats(previous => ({ ...previous, [session.key]: value }));
+      } catch { /* the pill keeps what it showed, or stays hidden */ }
+    };
+    const turn = async (session: MountedSession, on: boolean) => {
+      try { const { rpc, options } = relayOf(session); await rpc.setRelayChat({ sessionID: session.id, on }, options); } catch { /* shown by the refresh below */ }
+      await refresh(session);
+    };
+    const timer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of seen) if (now - entry.at > 15_000) seen.delete(key); else void refresh(entry.session);
+    }, 5000);
+    try {
+      ctx.add(ComposerPill, {
+        id: 'relay',
+        show: input => {
+          const session = input.session, first = !seen.has(session.key);
+          seen.set(session.key, { session, at: Date.now() });
+          if (first) void refresh(session);
+          const state = chats()[session.key];
+          if (!state) return undefined;
+          const view = pillView(state);
+          return {
+            label: view.label, tone: view.tone, title: 'Relay',
+            rows: view.rows.map(row => ({ id: row.id, label: row.label, tone: row.tone, run: row.id === 'toggle' ? () => void turn(session, !state.on) : undefined })),
+          };
+        },
+      });
+    } catch { /* a host without the pill registry loses only the pill */ }
+    return () => clearInterval(timer);
   },
 });
