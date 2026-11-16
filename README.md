@@ -1,43 +1,107 @@
 # Relay
 
-Relay (the package and internal ids are still named `feature-pilot`) is an **unfinished prototype** of an OpenCode Desktop plugin for planning, implementing and independently reviewing a feature with models selected by the user. It is not ready for production use or publication as a working orchestrator.
+**Relay picks the right model for each message in OpenCode.** You choose models for three kinds of work, Plan, Execute and Review, once. Then you type `/relay <message>`, or turn Relay on for a chat. A small decision model reads the message, picks the kind of work and the model that fits it, switches the chat to that model, and sends your message. The answer appears in the same chat.
 
-The intended workflow uses three roles: a planner clarifies the requirement and writes a plan, a coder implements the approved plan, and a reviewer from another vendor checks the result. The user chooses the models and variants allowed for each role. The design also calls for bounded repair cycles, spending limits and a comparison with subscription costs. See the [design](docs/opencode-feature-pilot-design.md) and [implementation plan](docs/opencode-feature-pilot-plan.md).
+> Relay is early. It is built for OpenCode 2.3.0. So far it has run against tests and an isolated OpenCode with a mock model; the first live run in a full OpenCode setup is still to come. See [Status](#status).
 
-## Current state
+(The package and its internal ids are still named `feature-pilot`. That is on purpose: renaming them would lose saved settings.)
 
-- The local server entry has loaded in an isolated OpenCode 2.2.7 host. One real run has gone all the way to accepted on Windows with real Ollama Cloud models ([compatibility findings](docs/compatibility.md)). The panel opens in OpenCode Desktop 2.2.7 on Windows (reported by the user, not seen by the assistant); its current tabbed layout has only been rendered in a browser preview with fake data.
-- The prototype includes project-scoped model selections, draft records, a partial observed-usage view and manually entered cost scenarios. Host estimates are incomplete and are not provider bills.
-- Artificial Analysis data is optional and requires the user's own key. Displayed entries are not verified model/variant matches and are not used for routing. Users must check their own data-use rights.
-- **The end-to-end workflow still does not run against a real host.** Every plugin-owned model request now reserves its worst-case cost before dispatch (context window as input at the dearest input rate, plus the model's full output limit; your planned output tokens only drive estimates, because nothing enforces them as a cap) and is refused when there is no atomic budget ledger, no user-entered rate card, unknown token limits, an unbounded billing route or too little budget. Stock OpenCode 2.2.7 has no atomic storage, so on it every owned request is refused; budget enforcement needs the locally modified host described below. Reservations are released only by settlement evidence (the provider's own charge, or proof nothing was sent) that the user records with `settleReservation`; nothing settles them automatically, so budgets drain conservatively until you do. One exception (the owner, 14 Nov 2026): the small decision request behind `/relay` is not reserved and has no budget; it is limited by its size, and only a decision model can make it.
-- A resume-safe run driver (plan, approve, implement, validate, review, repair up to two rounds) is connected to host-backed stages and to `driveDraft`/`stopDraft` RPC: it creates a separate git worktree beside the project (not a sandbox: shell commands run with your own account permissions), runs the coder there, validates the approved commands through the host shell tool, picks a reviewer from a vendor that did not plan or code, and reviews the exact diff. It also includes a run lifecycle with pause/resume/stop/amendment, a route recommender (`recommendRoutes`), local export, run cost summaries and fixture-only measurement. **All of this has only been exercised against in-memory fakes of the host and real local git, never a real OpenCode host.** The coder (file edits and shell) is **off by default** and turns on only through the `coderEnabled` policy flag, because on 2.2.7 a broad allow rule can override a project's own deny rules; enable it only in a disposable project. One-shot command steps in an approved plan run in the foreground through the same host shell tool as validation (they need the `coderEnabled` opt-in too); steps that need a background service pause as `unsupported_step`, because OpenCode 2.2.7 gives plugins no verified way to stop an owned background shell. Draft-PR delivery is reachable over RPC (`getDelivery`, `saveDelivery`, `deliverDraft`) and from the panel, but only for an **accepted** run in a project whose settings authorize one remote; it is off by default, pushes only the run's own branch, never merges, and has only run against a scripted fake of `gh` and a local bare repository, never real GitHub. Stop now also ends a running validation wait, and a planner or reviewer reply wrapped in one Markdown fence is accepted.
-- The panel now has controls for starting a feature, answering questions, approving, running (supervised or autonomous), stopping, accepting, resuming, exporting a preview, per-role spending policy with rate cards, the `coderEnabled` switch with its permission warning, budgets, a reservation list with settlement against the provider's own charge record, and a route-recommendation form with plain-language exclusion reasons (scores are entered by you and unverified; nothing is saved or switched automatically). Its decision logic lives in `src/gui-model.ts` and is unit tested; **the current tabbed layout (Run, Modes, Spend, More) has only been rendered in a browser preview with fake data, never seen in OpenCode Desktop by the assistant**. The Modes tab (it replaced Models on 14 Nov 2026 and is the tab the panel opens on) holds the settings for `/relay`: the models of each mode with an optional "use it for" line, the decider, a box to try a sample message, the last choice and the review rules. The panel no longer edits the old pipeline's planner, coder and reviewer models; the ones already saved stay in storage and a run still uses them. A Delivery section authorizes (or clears) one GitHub destination, and an accepted run offers "Publish draft pull request…" behind a second confirming click; "Export summary to disk" writes beside the run worktrees.
-- **`/relay` (14 Nov 2026).** In a normal chat, `/relay <message>` asks a decision model that you choose (the "decider") whether the message is plan, execute or review work and, where a mode has several models, which model's "use it for" line fits. Relay then switches the chat to that model and agent and sends the message, once and unchanged. When a model starts a helper (an OpenCode subagent) whose task is a check of work, the helper starts on a Review model with Relay's review rules. With no decider chosen, nothing is asked and nothing is switched. To choose, Relay sends the decider's provider the message text (at most 4,000 characters), the names and sizes of attached files, the number of attached pictures, the name of the chat's agent and your "use it for" lines; never file contents, pictures or earlier messages. The task text of each helper that a model starts is sent the same way — written by the calling model, so it may itself quote code or chat content that the person never sees before it goes out. These requests are not reserved in the budget ledger. **On a real host only this has run: the packed plugin loads on an isolated OpenCode 2.3.0 (Windows), `/relay` is registered, a blank `/relay` is refused, and with no decider one message goes once to the chat's own mock model and is recorded. Apart from the plugin, the decider's questions were measured with 30 made-up messages (`npm run examples:decider`, sent twice to the free decision model `opencode/jev-1.13-free` from an isolated OpenCode with no login): the mode was right 30 of 30 times, no message that is not Execute went to Execute (one of them only because an answer under 60% sure means Plan), the expected "use it for" line was matched 29 of 30 times, and a decision took about 0.13 s, except the first one after the host started, which took about 1.2 s. The labels are the builder's and the owner has not checked them. The switch, helpers on a Review model, pictures and the Modes tab in Desktop have only run against fakes or in a browser preview.** The table is in the [compatibility findings](docs/compatibility.md).
-- No measured savings exist. See [measurements](docs/measurements.md) for the method and what is still needed before any claim.
-- OpenCode 2.2.7's plugin context does not provide a verified way to inspect and stop owned background shells. Session interruption alone did not stop a shell in the isolated probe. See [compatibility findings](docs/compatibility.md); [what OpenCode would need to add](docs/opencode-host-requirements.md) to allow service steps.
-- **Budget storage.** Stock 2.2.7 plugin storage has no compare-and-set. When the host lacks it, budgets are kept in a SQLite file the plugin owns (`<XDG_DATA_HOME or ~/.local/share>/opencode/feature-pilot/ledger.sqlite`), safe across OpenCode processes but **not** protected from other programs running as you, and not carried over if OpenCode later provides atomic storage (the host's own storage is then preferred, and spend recorded in the file is not counted). The panel shows which one is in use. Without either, no paid request is allowed.
-- `npm run smoke:host` and `npm run smoke:host:model` (they need `FEATURE_PILOT_SMOKE_CLI` pointing at an `opencode` 2.3.0 binary and a prior `npm run build`) load the packed plugin into an isolated scratch host with no credentials. The second one sends one planner request to a free loopback mock model and checks the ledger. Neither exercises the coder, reviewer, shell tool or the Desktop panel.
-- Some experiments require a locally modified OpenCode checkout; that fork is not included in this repository. The `smoke-fork-*` scripts expect a sibling checkout named `opencode-host-fork` and do not work from this repository alone.
+## Why use it
 
-Do not install this prototype in a working OpenCode profile or provide paid credentials. The [Desktop test checklist](docs/desktop-testing.md) describes the isolated test setup and its current limits.
+- **The right model, message by message.** Use a strong reasoning model for design and planning, a fast or cheap one for small edits, and a careful one for reviews. Relay switches for you.
+- **Your own words decide.** Each model in a mode can have a "use it for" line, such as "small, quick edits" or "security reviews". The decision model matches your message to those lines. It never sees model names or prices.
+- **Checks of work run on your Review model.** When a model starts a helper (an OpenCode subagent) to check work, Relay gives that helper your Review model and rules that make a review end: a verdict every time, and at most three checks.
+- **Small, quick decisions.** A decision is one small request to a decision model. With OpenCode's free `opencode/jev-1.13-free`, a decision took about 0.13 seconds in testing (about 1.2 seconds for the first one after OpenCode starts), and OpenCode reported a cost of $0.
+- **Your message is safe.** It is sent once and unchanged. If anything goes wrong while choosing, it still goes to the chat's current model. Relay never stores the text of your messages.
+- **Measured, not promised.** On 30 labelled example messages, the decision model picked the right kind of work 30 times out of 30, and the expected model 29 times (the labels were written by the author). No cost savings have been measured.
 
-## Starter prompt
+## Install
 
-> Feature: [describe the problem and desired result]. Inspect this repo and its existing instructions first. Expand this into an implementation brief with observable acceptance criteria. Ask me about material unknowns; do not guess them. Consider real user journeys, failures, permissions, security, scale, monitoring/logs, accessibility, migrations and rollback; cover SEO/AEO/GEO only when applicable. Produce an ordered plan with affected areas, capabilities needed and validation commands without editing source. Follow this run's approval mode. After authorization, implement only the approved plan. Review the actual diff and validation evidence against the requirement and plan using the configured independent reviewer policy. Fix substantiated blocking issues within the configured repair and spending limits; stop with unresolved evidence if limits are reached. Show selected models, selection reasons, estimated and recorded costs, and comparison assumptions.
+You need OpenCode 2.3.0 (Desktop or the terminal app), and Node.js 24 with npm and git to build Relay.
 
-The prompt expresses intent. Permissions, stage gates, hashes, budgets and loop limits are enforced by the plugin, not by asking the model to obey this paragraph.
+1. Get Relay and build it:
 
-## Development
+   ```sh
+   git clone https://github.com/AsadKhalil/orchestrator-plugin.git
+   cd orchestrator-plugin
+   npm ci
+   npm run build
+   ```
 
-The package pins OpenCode's plugin, client and schema packages to 2.3.0. Local checks run on Node.js 24 (Windows) and are defined for Node.js 24 in CI:
+2. Tell OpenCode to load it. Open OpenCode's global config file, `~/.config/opencode/opencode.json` (on Windows, `C:\Users\<you>\.config\opencode\opencode.json`; create it if it does not exist), and add the folder you cloned to `plugins`:
+
+   ```json
+   {
+     "plugins": ["/full/path/to/orchestrator-plugin"]
+   }
+   ```
+
+   On Windows, write the path with forward slashes, for example `"C:/Users/you/code/orchestrator-plugin"`. Keep any plugins that are already in the list.
+
+3. Restart OpenCode. (Desktop usually picks up a change to this file by itself within a minute.)
+4. Check: type `/` in a chat. `/relay` should be in the list.
+
+To update later: `git pull`, `npm ci`, `npm run build`, then restart OpenCode.
+
+## Set up (once, in OpenCode Desktop)
+
+1. Open the command palette and run **Open Relay**. The Relay panel opens on its **Modes** tab.
+2. Add models to **Plan**, **Execute** and **Review**. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
+3. Choose a **decider**: a decision model. OpenCode lists the ones you can use; `opencode/jev-1.13-free` is free.
+4. Type a sample message in the test box and press **Try** to see what Relay would pick.
+
+The settings are shared by all your projects. The terminal app has no settings screen, so set them up in Desktop.
+
+## Use
+
+| You type | What happens |
+|---|---|
+| `/relay <message>` | Relay picks the mode and the model for this one message, switches the chat, and sends it. |
+| `/relay on` | Every message you send in this chat goes through Relay, without typing `/relay`. |
+| `/relay off` | This chat goes back to normal. |
+
+- In Desktop, the **Relay pill** above the chat box shows whether Relay is on for that chat. Click it to turn Relay on or off there, and to see the last choice.
+- OpenCode shows a "Switched to …" line in the chat when Relay changes the model.
+- Plan and Review use OpenCode's `plan` agent, which is meant for reading and planning, not editing. Only Execute uses `build`, which can change files.
+- When the decision model is not sure (under 60%), `/relay` uses Plan. With `/relay on`, the chat stays as it is.
+- In the terminal app, `/relay`, `/relay on` and `/relay off` work the same way. There is no pill there, and `/relay on` prints nothing.
+
+## What leaves your machine
+
+To choose, Relay sends the decider's provider your message text (at most 4,000 characters), the names and sizes of attached files (not their contents), how many pictures are attached, the name of the chat's agent, and your "use it for" lines. It never sends file contents, pictures, earlier messages, model names or prices. When a model starts a helper, the helper's task text is sent the same way; that text is written by the model and may quote code or chat content you do not see.
+
+OpenCode makes every request, with your OpenCode login. Relay never sees your API keys.
+
+## Status
+
+- **Ran on a real OpenCode 2.3.0, isolated, with a mock model (Windows):** the plugin loads; `/relay` is registered; with no decider, a message goes once to the chat's own model; `/relay on` makes each message go through Relay once, and `/relay off` stops it. In throwaway checks, a model or agent switch made as a message is sent served that same message.
+- **Ran against a real decision model:** 30 made-up messages, twice, with `opencode/jev-1.13-free` from an isolated OpenCode with no login.
+- **Not yet run in a full OpenCode setup:** switching between real models, helpers on the Review model, pictures, the Modes tab and the pill in Desktop, the terminal app, and the install steps above.
+
+Details are in the [compatibility findings](docs/compatibility.md) and the [change log](docs/implementation-progress.md).
+
+Known limits:
+
+- Decision requests are not counted against any budget.
+- With `/relay on`, a chat that is busy answering is not switched; the new message goes to the model already in use. `/relay` waits up to two minutes for a busy chat.
+- A file's size is guessed at four bytes per token, so a file close to a model's limit can still be too big for it.
+
+## The older pipeline
+
+This repo also holds an earlier, unfinished workflow: plan, implement and review a whole feature from the side panel, with spending limits and draft pull requests. It is not the product. The panel's Run, Spend and More tabs belong to it. It has run end to end once, on OpenCode 2.2.7 with real Ollama Cloud models, and otherwise only against fakes. Its coder can change files and run commands with your account's permissions; it is off until you turn on `coderEnabled`, and you should only do that in a throwaway project. Its design is in [docs/opencode-feature-pilot-design.md](docs/opencode-feature-pilot-design.md) and [docs/opencode-feature-pilot-plan.md](docs/opencode-feature-pilot-plan.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The four checks:
 
 ```sh
 npm ci
-npm test
 npm run typecheck
+npm test
 npm run build
-npm run check:prices -- --rates rates.json [--catalog models.json]   # read-only price delta report
-npm run measure -- --fixtures    # synthetic measurement fixtures only
+node scripts/check-package.mjs
 ```
 
-Passing these checks does not establish Desktop compatibility, billing accuracy or end-to-end safety. The package is private and unpublished; no license has been selected yet.
+## License
+
+[MIT](LICENSE)
