@@ -1,21 +1,35 @@
 {
   "name": "feature-pilot",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Relay for OpenCode: picks the model for each message (plan, execute or review), switches the chat to it, and sends the message.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AsadKhalil/orchestrator-plugin.git"
+  },
+  "homepage": "https://github.com/AsadKhalil/orchestrator-plugin#readme",
+  "bugs": "https://github.com/AsadKhalil/orchestrator-plugin/issues",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "relay",
+    "model-routing"
+  ],
   "type": "module",
   "scripts": {
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && vite build",
     "smoke:host:model": "node scripts/smoke-host-model.mjs",
-    "examples:decider": "tsx scripts/decider-examples.ts"
+    "examples:decider": "tsx scripts/decider-examples.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build && node scripts/check-package.mjs"
   },
   "dependencies": {
-    "@opencode/client": "2.3.0",
-    "@opencode/plugin": "2.3.0",
-    "@opencode/schema": "2.3.0"
+    "@opencode/plugin": "2.3.0"
   },
   "devDependencies": {
+    "@opencode/client": "2.3.0",
+    "@opencode/schema": "2.3.0",
     "@types/node": "^24.0.0",
     "solid-js": "^1.9.17",
     "tsx": "^4.0.0",

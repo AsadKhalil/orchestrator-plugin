@@ -43,6 +43,12 @@ Thanks for helping. Relay is an OpenCode plugin (package `feature-pilot`). `/rel
 - The four checks pass and CI is green.
 - By contributing, you agree that your contribution is licensed under the [MIT License](LICENSE).
 
+## Releasing (maintainers)
+
+1. Raise `version` in `package.json` and add a dated line to `docs/implementation-progress.md`.
+2. Run `npm login`, then `npm publish`. `prepublishOnly` runs the four checks first and stops the release if one fails.
+3. People can then install with one line: `"plugins": ["feature-pilot"]` in their global `opencode.json`. OpenCode installs the package from npm by itself.
+
 ## Reporting a problem
 
 Open a GitHub issue with your OpenCode version (`opencode --version`), your operating system, what you typed, what you expected and what happened. Leave API keys and anything private out of logs and screenshots.
