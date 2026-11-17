@@ -726,3 +726,22 @@ The owner said: "please rename i dont want feature-pilot name. 2: the model list
 2. `OPENCODE_DESKTOP_TEST_ROOT=<folder>` starts a second, separate Desktop with its own app data and XDG folders, but its managed service wants the same fixed port as the owner's (28894). Port 28995 was then set in the test folder's `config/opencode/service.json`, and a service started there by hand listened on 28995. The second Desktop still failed within 100 ms with "Background service failed to start", the state the owner's service was in at the time. This is not understood. The second Desktop was closed, and the owner's was not touched.
 
 **Not tested:** the table inside Desktop itself, and the terminal app.
+
+## 2026-11-17 — The decider's table, checks from helpers that name a model, and the repository rename
+
+The owner answered the three open questions with "yes do it".
+
+**The decider's table.** The decider is now chosen from the same table as the modes' models: search, the provider filter, the three orders, and **Use** on a row. The chosen decider shows as a chip with its price, an effort menu when it has efforts, and × to remove it. Checked in the plain Chromium page from the entry above, with three usable decision models and one deprecated one:
+
+- **+ Choose a decider** opened the table and closed a mode's table that was open.
+- The table listed the three usable models; the deprecated one stayed hidden. The provider filter counted 1 each, and Largest context put the 131K model first.
+- **Use** saved the decider, closed the table, and the no-decider warning went away.
+- The effort menu offered default, low and high, and saved "high".
+- **Change the decider** opened the table again, with the decider's row marked "✓ in use" and its button disabled.
+- A saved decider that is no longer offered showed as "unavailable". × removed it, and the warning came back.
+
+**Checks from helpers that name a model.** A helper whose task is a check now goes to the Review model even when the calling model named another. The record's note says what the caller asked for, for example "its caller asked for q/other". A helper that continues an earlier one is still left alone, and so is every helper that is not a check. Tests cover it, and the mutation check caught 5 of 5 breaks. It has **not** run in a live chat yet.
+
+**The repository.** `AsadKhalil/orchestrator-plugin` was renamed to `AsadKhalil/relay-opencode` on GitHub. The old address answers with a 301 to the new one. `package.json`, the README and AGENTS.md now use the new address.
+
+**Not tested:** the decider's table inside Desktop; a live helper started by a Claude model or by Superpowers since this change.

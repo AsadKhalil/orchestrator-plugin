@@ -20,6 +20,48 @@ const Acc = (props: { title: string; sub?: string; children: JSX.Element }) => {
   </details>;
 };
 
+/**
+ * The table a model is picked from: a search box, a provider filter and an order, then one row per model with its price per 1M tokens and
+ * its context size. Each table keeps its own search, filter and order, and starts afresh when it is opened again.
+ */
+const ModelTable = (props: { label: string; models: Model[]; action: string; actionLabel: (model: Model) => string; can: (model: Model) => boolean; mark: (model: Model) => string; tip?: (model: Model) => string | undefined; pick: (model: Model) => void; close: () => void }) => {
+  const [query, setQuery] = createSignal('');
+  const [provider, setProvider] = createSignal('');
+  const [order, setOrder] = createSignal<TableOrder>('provider');
+  const providers = createMemo(() => [...new Set(props.models.map(model => model.providerID))].sort().map(id => ({ id, count: props.models.filter(model => model.providerID === id).length })));
+  const rows = createMemo(() => modelRows(props.models, { query: query(), provider: provider(), order: order() }));
+  // Escape closes the table and stays inside the panel, so the host does not act on it too.
+  return <div class="rl-picker" role="group" aria-label={props.label} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); props.close(); } }}>
+    <div class="rl-inline">
+      <input class="rl-in" type="search" ref={element => setTimeout(() => element.focus())} placeholder="Search, e.g. sonnet or ollama" aria-label="Search models" value={query()} onInput={event => setQuery(event.currentTarget.value)} />
+      <button type="button" class="rl-btn sm" onClick={() => props.close()}>Done</button>
+    </div>
+    <div class="rl-inline">
+      <select class="rl-in" aria-label="Provider" onChange={event => setProvider(event.currentTarget.value)}>
+        <option value="" selected={provider() === ''}>All providers ({props.models.length})</option>
+        <For each={providers()}>{item => <option value={item.id} selected={provider() === item.id}>{item.id} ({item.count})</option>}</For>
+      </select>
+      <select class="rl-in" aria-label="Order" onChange={event => setOrder(event.currentTarget.value as TableOrder)}>
+        <option value="provider" selected={order() === 'provider'}>By provider</option>
+        <option value="price" selected={order() === 'price'}>Cheapest first</option>
+        <option value="context" selected={order() === 'context'}>Largest context</option>
+      </select>
+    </div>
+    <div class="rl-table-wrap">
+      <table class="rl-table">
+        <thead><tr><th scope="col">Model</th><th scope="col">Price per 1M<small>in / out</small></th><th scope="col">Context</th><th scope="col"><span class="rl-sr">{props.action}</span></th></tr></thead>
+        <tbody><For each={rows()}>{model => <tr>
+          <td><span class="rl-t-name">{model.name}</span><small>{model.providerID}{props.mark(model)}</small></td>
+          <td>{priceCell(model.cost)}</td>
+          <td>{contextLabel(model.limit.context)}</td>
+          <td><button type="button" class="rl-btn sm" disabled={!props.can(model)} title={props.tip?.(model)} aria-label={props.actionLabel(model)} onClick={() => props.pick(model)}>{props.action}</button></td>
+        </tr>}</For></tbody>
+      </table>
+    </div>
+    <span class="rl-hint" aria-live="polite">{rows().length ? `${rows().length} of ${props.models.length} models` : 'No model matches. Try fewer words, or All providers.'}</span>
+  </div>;
+};
+
 export default Plugin.define({
   setup(ctx) {
     const tab: PanelTab = { id: 'models', title: 'Relay', closable: 'compact', fallback: true };
@@ -61,13 +103,9 @@ export default Plugin.define({
         const poll = setInterval(() => void loadRecent(), 5000); onCleanup(() => clearInterval(poll));
         const decisions = createMemo(() => recent()?.session === props.session ? recent()!.decisions : data()?.relay.decisions ?? []);
         const when = (at: string) => new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        // The "Add a model" table: one mode's at a time, with a search box, a provider filter and an order.
-        const [adding, setAdding] = createSignal<Mode | null>(null);
-        const [query, setQuery] = createSignal('');
-        const [provider, setProvider] = createSignal('');
-        const [order, setOrder] = createSignal<TableOrder>('provider');
+        // One model table open at a time: a mode's "Add a model", or the decider's.
+        const [adding, setAdding] = createSignal<Mode | 'decider' | null>(null);
         const same = (a: ModelChoice, b: ModelChoice) => a.providerID === b.providerID && a.id === b.id && a.variant === b.variant;
-        const keyOf = (choice: ModelChoice) => JSON.stringify([choice.providerID, choice.id, choice.variant]);
         const chosen = (mode: Mode): ModeChoice[] => data()?.relay.settings.modes[mode] ?? [];
         /** Saves Relay's settings with one part changed, then reloads them. When the server refuses, its own words are shown. */
         const saveRelay = async (change: Partial<Pick<RelaySettings, 'modes' | 'decider'>>) => {
@@ -98,18 +136,12 @@ export default Plugin.define({
         };
         /** The same test the router uses, so a chip says "unavailable" exactly when /relay would pass the model over. */
         const unavailable = (choice: ModelChoice) => { const models = result(); return models !== undefined && !offered(models, choice); };
-        /** The decision models on offer, each with its efforts. A saved decider that is no longer offered stays in the list so the select can show it. */
-        const deciderChoices = createMemo(() => {
-          const relay = data()?.relay; if (!relay) return [];
-          const list = relay.deciders.filter(model => model.enabled && model.status !== 'deprecated').flatMap(model => [null, ...model.variants].map(variant => { const choice: ModelChoice = { providerID: model.providerID, id: model.id, variant }; return { key: keyOf(choice), choice, label: `${model.name}${variant ? ` · ${variant}` : ''} · ${priceLabel(model.cost)}` }; }));
-          const saved = relay.settings.decider;
-          return saved && !list.some(item => item.key === keyOf(saved)) ? [...list, { key: keyOf(saved), choice: saved, label: `${saved.id} · not offered now` }] : list;
-        });
-        const deciderKey = () => { const saved = data()?.relay.settings.decider; return saved ? keyOf(saved) : ''; };
         const usable = createMemo(() => (result() ?? []).filter(model => model.enabled && model.status !== 'deprecated'));
-        const providers = createMemo(() => [...new Set(usable().map(model => model.providerID))].sort().map(id => ({ id, count: usable().filter(model => model.providerID === id).length })));
-        const rows = createMemo(() => modelRows(usable(), { query: query(), provider: provider(), order: order() }));
-        const openTable = (mode: Mode) => { setQuery(''); setProvider(''); setAdding(mode); };
+        const deciders = createMemo(() => (data()?.relay.deciders ?? []).filter(model => model.enabled && model.status !== 'deprecated'));
+        /** The saved decider as the host offers it now; undefined when it is not offered, and the chip then says so. */
+        const deciderModel = createMemo(() => { const relay = data()?.relay, saved = relay?.settings.decider; return relay && saved ? offered(relay.deciders, saved) : undefined; });
+        const isDecider = (model: Model) => { const saved = data()?.relay.settings.decider; return !!saved && saved.providerID === model.providerID && saved.id === model.id; };
+        const inList = (mode: Mode, model: Model) => chosen(mode).some(choice => choice.providerID === model.providerID && choice.id === model.id);
         // A model goes in with the default effort, or with the first effort not in the list yet; the effort is changed on its row above.
         const addModel = (mode: Mode, model: Model) => { const variant = nextEffort(chosen(mode), model); if (variant !== undefined) setList(mode, [...chosen(mode), { providerID: model.providerID, id: model.id, variant, useFor: '' }]); };
         const taken = (mode: Mode, choice: ModeChoice, variant: string | null) => chosen(mode).some(item => same(item, { ...choice, variant }));
@@ -149,48 +181,35 @@ export default Plugin.define({
                 </div>}</For>
                 <Show when={!chosen(mode).length}><span class="rl-hint">None chosen yet. /relay leaves the chat as it is for {modeLabel(mode)}.</span></Show>
                 <Show when={chosen(mode).length > 1}><span class="rl-hint">Several models: the decider picks the one whose line fits your message. When no line fits clearly, the chat keeps its model if it is in this list; otherwise the first is used. With no lines written, the first is always used.</span></Show>
-                <Show when={adding() === mode} fallback={<button type="button" class="rl-btn sm rl-add" disabled={saving() || response.loading} onClick={() => openTable(mode)}>+ Add a model</button>}>
-                  {/* Escape closes the table and stays inside the panel, so the host does not act on it too. */}
-                  <div class="rl-picker" role="group" aria-label={`Add a model to ${modeLabel(mode)}`} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setAdding(null); } }}>
-                    <div class="rl-inline">
-                      <input class="rl-in" type="search" ref={element => setTimeout(() => element.focus())} placeholder="Search, e.g. sonnet or ollama" aria-label="Search models" value={query()} onInput={event => setQuery(event.currentTarget.value)} />
-                      <button type="button" class="rl-btn sm" onClick={() => setAdding(null)}>Done</button>
-                    </div>
-                    <div class="rl-inline">
-                      <select class="rl-in" aria-label="Provider" onChange={event => setProvider(event.currentTarget.value)}>
-                        <option value="" selected={provider() === ''}>All providers ({usable().length})</option>
-                        <For each={providers()}>{item => <option value={item.id} selected={provider() === item.id}>{item.id} ({item.count})</option>}</For>
-                      </select>
-                      <select class="rl-in" aria-label="Order" onChange={event => setOrder(event.currentTarget.value as TableOrder)}>
-                        <option value="provider" selected={order() === 'provider'}>By provider</option>
-                        <option value="price" selected={order() === 'price'}>Cheapest first</option>
-                        <option value="context" selected={order() === 'context'}>Largest context</option>
-                      </select>
-                    </div>
-                    <div class="rl-table-wrap">
-                      <table class="rl-table">
-                        <thead><tr><th scope="col">Model</th><th scope="col">Price per 1M<small>in / out</small></th><th scope="col">Context</th><th scope="col"><span class="rl-sr">Add</span></th></tr></thead>
-                        <tbody><For each={rows()}>{model => {
-                          const inList = () => chosen(mode).some(choice => choice.providerID === model.providerID && choice.id === model.id);
-                          return <tr>
-                            <td><span class="rl-t-name">{model.name}</span><small>{model.providerID}{model.capabilities.tools ? '' : ' · no tools'}{inList() ? ' · ✓ in the list' : ''}</small></td>
-                            <td>{priceCell(model.cost)}</td>
-                            <td>{contextLabel(model.limit.context)}</td>
-                            <td><button type="button" class="rl-btn sm" disabled={saving() || nextEffort(chosen(mode), model) === undefined} title={inList() ? 'Adds it once more, with another effort' : undefined} aria-label={`Add ${model.name} from ${model.providerID} to ${modeLabel(mode)}`} onClick={() => addModel(mode, model)}>Add</button></td>
-                          </tr>;
-                        }}</For></tbody>
-                      </table>
-                    </div>
-                    <span class="rl-hint" aria-live="polite">{rows().length ? `${rows().length} of ${usable().length} models` : 'No model matches. Try fewer words, or All providers.'}</span>
-                  </div>
+                <Show when={adding() === mode} fallback={<button type="button" class="rl-btn sm rl-add" disabled={saving() || response.loading} onClick={() => setAdding(mode)}>+ Add a model</button>}>
+                  <ModelTable label={`Add a model to ${modeLabel(mode)}`} models={usable()} action="Add" actionLabel={model => `Add ${model.name} from ${model.providerID} to ${modeLabel(mode)}`}
+                    can={model => !saving() && nextEffort(chosen(mode), model) !== undefined} mark={model => `${model.capabilities.tools ? '' : ' · no tools'}${inList(mode, model) ? ' · ✓ in the list' : ''}`}
+                    tip={model => inList(mode, model) ? 'Adds it once more, with another effort' : undefined} pick={model => addModel(mode, model)} close={() => setAdding(null)} />
                 </Show>
               </div>}</For>
               <div class="rl-card">
                 <div><strong class="rl-role">Decider</strong><span class="rl-hint">A small decision model. It picks the mode, and the model inside the mode, for each /relay message.</span></div>
-                <select class="rl-in" aria-label="Decision model" disabled={saving() || response.loading} onChange={event => { const key = event.currentTarget.value; void saveRelay({ decider: deciderChoices().find(item => item.key === key)?.choice ?? null }); }}>
-                  <option value="" selected={deciderKey() === ''}>No decider: /relay sends without switching</option>
-                  <For each={deciderChoices()}>{item => <option value={item.key} selected={item.key === deciderKey()}>{item.label}</option>}</For>
-                </select>
+                <Show when={data()?.relay.settings.decider} fallback={<span class="rl-hint">No decider chosen: /relay sends without switching.</span>}>{decider => <div class="rl-pick">
+                  <span class={`rl-chip ${data() && !deciderModel() ? 'bad' : ''}`}>
+                    <span class="rl-chip-t" title={`${decider().providerID} / ${decider().id}`}>{decider().id}{decider().variant ? ` · ${decider().variant}` : ''}</span>
+                    <Show when={data() && !deciderModel()}><small>unavailable</small></Show>
+                    <button type="button" class="rl-x" aria-label={`Remove the decider ${decider().providerID} / ${decider().id}`} disabled={saving()} onClick={() => void saveRelay({ decider: null })}>×</button>
+                  </span>
+                  <Show when={deciderModel()}>{model => <div class="rl-inline">
+                    <Show when={model().variants.length}>
+                      <select class="rl-in rl-effort" aria-label="Effort for the decider" disabled={saving()} onChange={event => void saveRelay({ decider: { ...decider(), variant: event.currentTarget.value || null } })}>
+                        <option value="" selected={decider().variant === null}>default effort</option>
+                        <For each={model().variants}>{variant => <option value={variant} selected={decider().variant === variant}>{variant} effort</option>}</For>
+                      </select>
+                    </Show>
+                    <span class="rl-hint">{priceLabel(model().cost)}</span>
+                  </div>}</Show>
+                </div>}</Show>
+                <Show when={adding() === 'decider'} fallback={<button type="button" class="rl-btn sm rl-add" disabled={saving() || response.loading} onClick={() => setAdding('decider')}>{data()?.relay.settings.decider ? 'Change the decider' : '+ Choose a decider'}</button>}>
+                  <ModelTable label="Choose a decider" models={deciders()} action="Use" actionLabel={model => `Use ${model.name} from ${model.providerID} as the decider`}
+                    can={model => !saving() && !isDecider(model)} mark={model => isDecider(model) ? ' · ✓ in use' : ''}
+                    pick={model => { setAdding(null); void saveRelay({ decider: { providerID: model.providerID, id: model.id, variant: null } }); }} close={() => setAdding(null)} />
+                </Show>
                 <span class="rl-hint">{privacyNote(data()?.relay.settings.decider?.providerID ?? null)}</span>
                 <div class="rl-inline">
                   <input class="rl-in" type="text" aria-label="A sample message to try the decider with" placeholder="Try a message, e.g. fix the login test" value={sample()} onInput={event => setSample(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Enter') void tryDecider(); }} />

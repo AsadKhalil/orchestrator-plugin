@@ -5,10 +5,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AsadKhalil/orchestrator-plugin.git"
+    "url": "git+https://github.com/AsadKhalil/relay-opencode.git"
   },
-  "homepage": "https://github.com/AsadKhalil/orchestrator-plugin#readme",
-  "bugs": "https://github.com/AsadKhalil/orchestrator-plugin/issues",
+  "homepage": "https://github.com/AsadKhalil/relay-opencode#readme",
+  "bugs": "https://github.com/AsadKhalil/relay-opencode/issues",
   "keywords": [
     "opencode",
     "opencode-plugin",

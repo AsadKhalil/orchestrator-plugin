@@ -10,7 +10,7 @@ The package is `relay-opencode`. Until 17 Nov 2026 it was called `feature-pilot`
 
 - **The right model, message by message.** Use a strong reasoning model for design and planning, a fast or cheap one for small edits, and a careful one for reviews. Relay switches for you.
 - **Your own words decide.** Each model in a mode can have a "use it for" line, such as "small, quick edits" or "security reviews". The decision model matches your message to those lines. It never sees model names or prices.
-- **Checks of work run on your Review model.** When a model starts a helper (an OpenCode subagent) to check work, Relay gives that helper your Review model and rules that make a review end: a verdict every time, and at most three checks.
+- **Checks of work run on your Review model.** When a model starts a helper (an OpenCode subagent) to check work, Relay gives that helper your Review model, even if the model that starts it asked for another one, and rules that make a review end: a verdict every time, and at most three checks.
 - **Small, quick decisions.** A decision is one small request to a decision model. With OpenCode's free `opencode/jev-1.13-free`, a decision took about 0.13 seconds in testing (about 1.2 seconds for the first one after OpenCode starts), and OpenCode reported a cost of $0.
 - **Your message is safe.** It is sent once and unchanged. If anything goes wrong while choosing, it still goes to the chat's current model. Relay never stores the text of your messages.
 - **Measured, not promised.** On 30 labelled example messages, the decision model picked the right kind of work 30 times out of 30, and the expected model 29 times (the labels were written by the author). No cost savings have been measured.
@@ -22,8 +22,8 @@ You need OpenCode 2.3.0 (Desktop or the terminal app), and Node.js 24 with npm a
 1. Get Relay and build it:
 
    ```sh
-   git clone https://github.com/AsadKhalil/orchestrator-plugin.git
-   cd orchestrator-plugin
+   git clone https://github.com/AsadKhalil/relay-opencode.git
+   cd relay-opencode
    npm ci
    npm run build
    ```
@@ -32,11 +32,11 @@ You need OpenCode 2.3.0 (Desktop or the terminal app), and Node.js 24 with npm a
 
    ```json
    {
-     "plugins": ["/full/path/to/orchestrator-plugin"]
+     "plugins": ["/full/path/to/relay-opencode"]
    }
    ```
 
-   On Windows, write the path with forward slashes, for example `"C:/Users/you/code/orchestrator-plugin"`. Keep any plugins that are already in the list.
+   On Windows, write the path with forward slashes, for example `"C:/Users/you/code/relay-opencode"`. Keep any plugins that are already in the list.
 
 3. Restart OpenCode. (Desktop usually picks up a change to this file by itself within a minute.)
 4. Check: type `/` in a chat. `/relay` should be in the list.
@@ -46,8 +46,8 @@ To update later: `git pull`, `npm ci`, `npm run build`, then restart OpenCode.
 ## Set up (once, in OpenCode Desktop)
 
 1. Open a chat, open the command palette (Ctrl+K) and run **Open Relay**. The Relay panel opens beside the chat.
-2. Add models to **Plan**, **Execute** and **Review**: press **+ Add a model** under a mode. A table lists the models OpenCode offers you, with the price per million tokens (input / output) and the context size. Type in the search box to find one by its name or its provider, narrow the table to one provider, or sort it by price (cheapest first) or by context (largest first). Press **Add** on a row. Each chosen model has a menu for its effort (low, high and so on) when the model offers them. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
-3. Choose a **decider**: a decision model. OpenCode lists the ones you can use; `opencode/jev-1.13-free` is free. Until you choose one, the panel and the pill warn you: without a decider, Relay switches nothing.
+2. Add models to **Plan**, **Execute** and **Review**: press **+ Add a model** under a mode. A table lists the models OpenCode offers you, with the price per million tokens (input / output) and the context size. Type in the search box to find one by its name or its provider, narrow the table to one provider, or sort it by price (cheapest first) or by context (largest first). Press **Add** on a row. Each chosen model has a menu for its effort (low, high and so on) when the model offers them. The prices come from OpenCode's own model catalog, which OpenCode fills from [models.dev](https://models.dev); Relay asks nothing of its own. "not listed" means OpenCode has no price for that model (on 17 Nov 2026 every model of the `claude-agent` provider), and "$0 or not listed" means the catalog says 0, which can be either. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
+3. Choose a **decider**: press **+ Choose a decider** and **Use** on a row. The table lists only the decision models OpenCode offers you; `opencode/jev-1.13-free` is free. **Change the decider** opens it again, and × removes the decider. Until you choose one, the panel and the pill warn you: without a decider, Relay switches nothing.
 4. Type a sample message in the test box and press **Try** to see what Relay would pick.
 
 **Recent choices** at the bottom of the panel lists the last 20 decisions, for chats and helpers, and updates by itself.
@@ -85,7 +85,8 @@ OpenCode makes every request, with your OpenCode login. Relay never sees your AP
 - **The install steps above, followed from a fresh clone of this repository in a throwaway OpenCode profile (Windows, 17 Nov 2026):** OpenCode loaded Relay and `/relay on` worked in a new chat.
 - **Not yet run in a full setup:** the interactive terminal app, and Relay with a real decision model on macOS and Linux.
 - **The model table (17 Nov 2026), in a plain browser page that runs the panel's real code with a fake OpenCode:** search, the provider filter, the three orders, Add, adding a model again with another effort, and the effort menu all did what they should. Not yet seen in Desktop itself.
-- **Renamed on 17 Nov 2026:** the package and the plugin id are now `relay-opencode` (they were `feature-pilot`). The renamed package passed the isolated real-host check on Windows.
+- **The decider's table, and checks from helpers that name a model (17 Nov 2026):** the decider is picked from the same kind of table, checked in the same plain page. A helper whose task is a check now goes to the Review model even when the calling model names another; tests cover it, and it has not run in a live chat yet.
+- **Renamed on 17 Nov 2026:** the package, the plugin id and the GitHub repository are now `relay-opencode` (they were `feature-pilot` and `orchestrator-plugin`; the old repository address forwards to the new one). The renamed package passed the isolated real-host check on Windows.
 - **Removed on 17 Nov 2026:** the older feature pipeline in the side panel (the Run, Spend and More tabs). Anything it saved is left in place and ignored.
 
 Details are in the [compatibility findings](docs/compatibility.md) and the [change log](docs/implementation-progress.md).
@@ -97,7 +98,7 @@ Known limits:
 - A file's size is guessed at four bytes per token, so a file close to a model's limit can still be too big for it.
 - In Desktop, a picture pasted into a `/relay` message is lost before Relay sees it: OpenCode gives a command only the text and @-mentioned files. @-mention the picture instead, or paste it into a plain message with Relay on.
 - Desktop sends its own agent with every message, and a plugin cannot change it. So the message after a one-off `/relay` to Plan or Review runs on Build, with the model Relay picked. With `/relay on`, every message is placed again.
-- When the model that starts a helper names the helper's model itself, Relay leaves the helper alone. Claude models and Superpowers did this in the live check, so their review helpers kept the model they chose.
+- A helper that continues an earlier helper keeps that helper's model.
 - Plan and Review rely on OpenCode's `plan` agent not editing. Another plugin can change that: in the live check, with the Plannotator plugin installed, a Plan turn submitted a plan and then edited a file.
 
 ## Contributing

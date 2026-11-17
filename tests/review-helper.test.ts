@@ -51,13 +51,25 @@ test('with several Review models the line the decider chose picks the helper\'s 
   assert.equal(gone.input.model, 'p/eyes', 'a Review model that is not offered is passed over');
 });
 
+test('a helper that names its own model still starts on a Review model when its task is a check, and the record says what it asked for', async () => {
+  // The owner, 17 Nov 2026: checks go to the Review model even when the calling model names one (Claude callers and Superpowers always do).
+  const named = await started(check, { ...task, model: 'q/other' });
+  assert.deepEqual(named.input, { ...task, model: 'p/review', prompt: `${task.prompt}\n\n${reviewRules}` });
+  assert.deepEqual([(await last(named.f)).model, (await last(named.f)).note], ['p/review', 'its caller asked for q/other']);
+  const same = await started(check, { ...task, model: 'p/review' });
+  assert.deepEqual([same.input.model, (await last(same.f)).note], ['p/review', null], 'asking for the Review model itself needs no note');
+  const settings = reviewers(entry('review', null, 'small diffs'), entry('eyes', null, 'security and money code'));
+  const unclear = await started({ settings, decision: { choice: 'review', confidence: 0.9, lines: { review: { choice: 'none', confidence: 0.9 } } } }, { ...task, model: 'q/other' });
+  assert.deepEqual([unclear.input.model, (await last(unclear.f)).note], ['p/review', 'its caller asked for q/other; no line fits clearly, so the first model is used']);
+});
+
 test('every other helper is left as it is', async () => {
   for (const [options, input, decided, note] of [
     [{ decision: { choice: 'execute', confidence: 0.95 } }, task, true, 'not a check'],
     [{ decision: { choice: 'plan', confidence: 0.95 } }, task, true, 'not a check'],
     [{ decision: { choice: 'review', confidence: 0.59 } }, task, true, 'not sure it is a check'],
     [{ decision: new Error('boom') }, task, true, 'the decider gave no answer: boom'],
-    [check, { ...task, model: 'q/other' }, false, null],                               // the call names a model
+    [{ decision: { choice: 'execute', confidence: 0.95 } }, { ...task, model: 'q/other' }, true, 'not a check'],   // names a model, not a check
     [check, { ...task, sessionID: 'ses-child' }, false, null],                         // it continues an earlier helper
     [{ ...check, settings: { modes: { plan: [], execute: [], review: [] } } }, task, false, null],   // no Review model
     [{ ...check, settings: reviewers(entry('gone')) }, task, false, null],             // the only Review model is not offered
