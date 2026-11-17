@@ -88,6 +88,26 @@ test('a call that never answers or throws never holds the message long, and the 
   await assert.doesNotReject(relayAutoHook(fakeRelay().deps)({ sessionID: 'ses-1' } as never), 'an event with no prompt');
 });
 
+test('with the switch on, a picture Desktop uploaded counts as a picture, and its other uploads as files', async () => {
+  // Desktop 2.3.0 sends a pasted picture or file as an upload: a line with its path in the text, an entry in the message's metadata, and no file part (17 Nov).
+  const asked = (f: Fake) => (f.calls.find(call => call.name === 'decisions')?.input as { input: { text: string }[] }).input[0].text.split('\n')[1];
+  const entry = (id: string) => ({ providerID: 'p', id, variant: null, useFor: '' });
+  const uploads = { attachments: [{ name: 'task.png', mime: 'image/png', path: '/tmp/uploads/1/task.png' }, { name: 'notes.txt', mime: 'text/plain', path: '/tmp/uploads/2/notes.txt' }] };
+  const none = turnOn(fakeRelay());
+  await relayAutoHook(none.deps)(event('do what the picture says', uploads));
+  assert.equal(asked(none), 'Before this message the chat was on a read-only agent, which explains and plans and cannot change files. Attached files: notes.txt (2 kB). Attached pictures: 1.');
+  assert.deepEqual(switches(none), [], 'no chosen Execute model takes pictures, so nothing is switched');
+  assert.match((await last(none)).note!, /no chosen Execute model takes pictures/);
+  const eyes = turnOn(fakeRelay({ settings: { modes: { plan: [entry('plan')], execute: [entry('exec'), entry('eyes')], review: [entry('review')] } } }));
+  await relayAutoHook(eyes.deps)(event('do what the picture says', uploads));
+  assert.deepEqual((eyes.calls.find(call => call.name === 'switchModel')?.input as { model: unknown }).model, { providerID: 'p', id: 'eyes' });
+  for (const odd of [{ attachments: 'task.png' }, { attachments: [null, 3, { name: 'x.png', mime: 5, path: '/x.png' }, { name: 'y.png', mime: 'image/png' }] }]) {
+    const f = turnOn(fakeRelay());
+    await relayAutoHook(f.deps)(event('do what the picture says', odd));
+    assert.match(asked(f), /Attached files: none\. Attached pictures: 0\.$/, JSON.stringify(odd));
+  }
+});
+
 // Last on purpose: a write that never finishes holds Relay's storage queue for the rest of this file.
 test('a record write that never finishes does not hold the message', async () => {
   const record = turnOn(fakeRelay({ readMs: 2000 })), set = record.deps.store.set;   // a long limit, so waiting for the record would show

@@ -163,5 +163,6 @@ try {
   throw error;
 } finally {
   await stop(server); await new Promise(done => mock.close(done));
-  await rm(root, { recursive: true, force: true });
+  // On Windows the folder can stay locked for a moment after the server exits (EBUSY in CI, 17 Nov); a leftover scratch folder is not a failure.
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 }).catch(error => console.warn(`WARN: could not remove the scratch folder: ${error?.code ?? error}`));
 }

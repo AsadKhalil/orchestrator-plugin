@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
+import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pickerModel, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
 import { buildDecisionRequest, MAX_CHARS, MAX_FILE_NAMES } from '../src/decider.js';
 
 const chat = { kind: 'chat' as const, mode: 'execute' as const, model: 'p/exec#high' as string | null, confidence: 0.98 as number | null, fit: null as number | null, ms: 150, note: null as string | null };
@@ -85,4 +85,14 @@ test('cheapest first sorts by the input price, then the output price, compared e
   assert.deepEqual([...list].sort(cheapestFirst).map(item => item.name), ['zero', 'tiny', 'a', 'a2', 'b', 'big', 'half', 'none']);
   // Prices are compared as exact decimals: the same price written two ways ties, and the name decides.
   assert.equal(cheapestFirst(model('x', '0.3', '0'), model('y', '0.30', '0')), 'x'.localeCompare('y'));
+});
+
+test("the model to put in Desktop's picker after Relay switched a chat, and none after anything else", () => {
+  // Desktop sends its picker's model with every message, so a picker left behind would undo Relay's switch on the next one (17 Nov).
+  assert.deepEqual(pickerModel({ ...chat, model: 'claude-agent/sonnet' }), { providerID: 'claude-agent', modelID: 'sonnet' });
+  assert.deepEqual(pickerModel(chat), { providerID: 'p', modelID: 'exec', variant: 'high' });
+  assert.deepEqual(pickerModel({ ...chat, model: 'openrouter/anthropic/claude-x' }), { providerID: 'openrouter', modelID: 'anthropic/claude-x' }, 'only the first slash ends the provider');
+  assert.equal(pickerModel({ ...chat, kind: 'helper' }), null, "a helper's model is not the chat's");
+  assert.equal(pickerModel({ ...chat, model: null }), null, 'nothing was switched');
+  for (const odd of ['noslash', '/m', 'p/', 'p/#high', 'p/m#']) assert.equal(pickerModel({ ...chat, model: odd }), null, odd);
 });

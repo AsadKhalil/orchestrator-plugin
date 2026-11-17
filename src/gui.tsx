@@ -5,7 +5,7 @@ import { offered, type ModelChoice } from './settings.js';
 import type { ModelCostView } from './inventory.js';
 import { USE_FOR_MAX, type Decision, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
 import { describeError, modeLabel, reviewRules } from './router.js';
-import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from './relay-view.js';
+import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pickerModel, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from './relay-view.js';
 import { panelCss } from './gui-styles.js';
 
 type Model = { providerID: string; id: string; name: string; enabled: boolean; status: string; variants: string[]; capabilities: { input: string[]; tools: boolean }; cost: ModelCostView };
@@ -179,11 +179,27 @@ export default Plugin.define({
     const [chats, setChats] = createSignal<Record<string, { on: boolean; last: Decision | null; decider: boolean }>>({});
     const seen = new Map<string, { session: MountedSession; at: number }>();
     const relayOf = (session: MountedSession) => ({ rpc: session.server.client.rpc(FeaturePilot), options: { location: { directory: session.directory } } });
+    // Desktop sends its model picker's choice with every message (2.3.0, 17 Nov), so after Relay switches a chat the picker must follow, or
+    // the next message goes back to the old model. Only a switch made while the pill watches the chat is followed, once, and only while that
+    // chat is on screen, so a model the person picks afterwards stands.
+    // shortcut: a chat switched while another one is on screen is followed when it is shown again; a pick made in the picker within the
+    // few seconds before that is overridden.
+    const followed = new Map<string, string>();
+    const follow = (session: MountedSession, last: Decision | null) => {
+      const at = last?.at ?? '';
+      if (!followed.has(session.key)) { followed.set(session.key, at); return; }
+      if (!last || followed.get(session.key) === at) return;
+      const model = pickerModel(last);
+      if (!model) { followed.set(session.key, at); return; }
+      if (ctx.sessions.current()?.key !== session.key) return;
+      if (ctx.screen.current()?.composer.setModel(model)) followed.set(session.key, at);
+    };
     const refresh = async (session: MountedSession) => {
       try {
         const { rpc, options } = relayOf(session);
         const value = await rpc.getRelayChat({ sessionID: session.id }, options) as { on: boolean; last: Decision | null; decider: boolean };
         setChats(previous => ({ ...previous, [session.key]: value }));
+        follow(session, value.last);
       } catch { /* the pill keeps what it showed, or stays hidden */ }
     };
     const turn = async (session: MountedSession, on: boolean) => {

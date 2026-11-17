@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Plugin } from '@opencode/plugin';
 import type { PromptInput } from '@opencode/schema/prompt-input';
 import type { Session } from '@opencode/schema/session';
@@ -43,6 +43,17 @@ export function isPicture(file: AttachedFile): boolean {
   const uri = file.uri ?? '';
   return uri.startsWith('data:image/') || PICTURE.test(file.name ?? '') || (!uri.startsWith('data:') && PICTURE.test(bare(uri)));
 }
+export type Upload = { readonly name: string; readonly mime: string; readonly path: string };
+/**
+ * Desktop 2.3.0 sends a pasted picture or file as an upload: a line with its path in the text, an entry in the message's metadata, and no
+ * file part (seen on 17 Nov). Only well-formed entries count; the metadata comes from the client.
+ */
+export function uploadsOf(metadata: unknown): Upload[] {
+  const list = (metadata as { attachments?: unknown } | null | undefined)?.attachments;
+  return Array.isArray(list) ? list.filter((item): item is Upload => !!item && typeof item === 'object' && typeof item.name === 'string' && typeof item.mime === 'string' && typeof item.path === 'string') : [];
+}
+const isImage = (upload: Upload) => upload.mime.startsWith('image/');
+
 /** What the decider may be told of a file: its name, else its address without what follows a ? or #. Never the content that a `data:` address holds. */
 const nameOf = (file: AttachedFile) => file.name ?? (file.uri && !file.uri.startsWith('data:') ? bare(file.uri) : '');
 
@@ -63,7 +74,7 @@ export const timingOf = (deps: Pick<RelayDeps, 'waitMs' | 'sizeMs' | 'readMs'>):
  * Decides which mode and model fit one message and puts the chat on them. It never throws: what goes wrong becomes a note, and the chat
  * stays as it is from there on. `unsure` is what an answer under 0.6 means; `timing.waitMs` is how long a busy chat is waited for.
  */
-export async function placeMessage(deps: RelayDeps, timing: Timing, input: { readonly sessionID: Session.ID; readonly prompt: PromptInput.Prompt; readonly unsure: 'plan' | 'stay' }): Promise<Placed> {
+export async function placeMessage(deps: RelayDeps, timing: Timing, input: { readonly sessionID: Session.ID; readonly prompt: PromptInput.Prompt; readonly unsure: 'plan' | 'stay'; readonly uploads?: readonly Upload[] }): Promise<Placed> {
   const { sessionID, prompt } = input, { waitMs, sizeMs, readMs } = timing;
   const outcome: Placed['outcome'] = { mode: null, confidence: null, fit: null, model: null, ms: 0, costUsd: null };
   const notes: string[] = [];
@@ -85,12 +96,16 @@ export async function placeMessage(deps: RelayDeps, timing: Timing, input: { rea
     const read = await within(() => Promise.all([reading('the settings', () => getRelaySettings(deps.store)), reading('the chat', () => deps.session.get({ sessionID })), reading('the model list', deps.chatModels)]), readMs);
     if (read === LATE) { notes.push(`Relay's settings, the chat or the model list did not answer within ${readMs / 1000} seconds`); return; }
     const [settings, chat, models] = read;
-    const files: readonly AttachedFile[] = prompt.files ?? [], pictures = files.filter(isPicture);
-    const facts = await Promise.all(files.filter(file => !isPicture(file)).map(async file => ({ name: nameOf(file), bytes: file.uri ? await sized(file.uri) : null })));
+    const files: readonly AttachedFile[] = prompt.files ?? [], uploads = input.uploads ?? [];
+    const pictures = files.filter(isPicture).length + uploads.filter(isImage).length;
+    const facts = await Promise.all([
+      ...files.filter(file => !isPicture(file)).map(async file => ({ name: nameOf(file), bytes: file.uri ? await sized(file.uri) : null })),
+      ...uploads.filter(upload => !isImage(upload)).map(async upload => ({ name: upload.name, bytes: await sized(pathToFileURL(upload.path).href) })),
+    ]);
     // shortcut: four bytes to a token. Dense text takes more, so a file close to a model's size can still be too big for it.
-    const attachment = { needsImage: pictures.length > 0, tokens: Math.ceil(facts.reduce((sum, file) => sum + (file.bytes ?? 0), 0) / 4) };
+    const attachment = { needsImage: pictures > 0, tokens: Math.ceil(facts.reduce((sum, file) => sum + (file.bytes ?? 0), 0) / 4) };
     const current = chat.model ? { providerID: chat.model.providerID, id: chat.model.id, variant: hostVariant(chat.model.variant) } : null;
-    const answer = await deps.decide(settings.decider, { kind: 'chat', text: prompt.text, agent: chat.agent ?? null, files: facts, images: pictures.length, lines: linesFor(settings, models, attachment) });
+    const answer = await deps.decide(settings.decider, { kind: 'chat', text: prompt.text, agent: chat.agent ?? null, files: facts, images: pictures, lines: linesFor(settings, models, attachment) });
     const result = route(answer, settings, models, attachment, current, input.unsure);
     Object.assign(outcome, { mode: result.mode, ms: answer.ms }, answer.kind === 'answer' ? { confidence: answer.confidence, costUsd: answer.costUsd } : {});
     if (result.note !== null) notes.push(result.note);

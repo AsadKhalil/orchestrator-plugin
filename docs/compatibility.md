@@ -651,3 +651,49 @@ Fixed in `src/decider.ts`: `plan` is described as a read-only agent and `build` 
 **Cost.** The test chat went from $0.01 to $0.22 (OpenCode's figure, the helper included). About 40 decider requests (Try box, the experiments above) at $0.24 per million input tokens came to about a cent. Far under the $2 limit.
 
 **Not tested:** pictures and attached files through Relay; the bigger-changes Execute model (`glm-5.3` was never picked); the interactive terminal app (I could not type into it); a busy chat with the switch on; macOS and Linux.
+
+## 2026-11-17 — Stage 2 and a live check with Claude models (Desktop 2.3.0 on Windows 11; the smoke on Linux, macOS and Windows)
+
+The owner said: "yes use claude models like sonet or haiku and test extensively. make quick fixes. remove hide yes complete next steps and report to me". Desktop 2.3.0 with its bundled CLI 2.3.0; Relay loaded from this repository's `dist/`. I drove Desktop through a debugging port bound to 127.0.0.1, as on 16 Nov, and restarted it normally afterwards.
+
+**The smoke on three systems (mock model, no decider).** CI run 44056649850 for b28c1f1, with the binary from `@opencode/cli-<os>-<arch>@2.3.0`: the smoke passed its checks on ubuntu-latest, macos-latest and windows-latest. The packed plugin loaded from `node_modules`; `/relay` with no decider sent one message to the chat's own model and recorded it; `/relay on` kept the switch across a server restart and placed each plain message once; `/relay off` stopped it. The Windows job then failed to delete its scratch folder (EBUSY), so the script now retries and only warns. Locally on Windows with Desktop's bundled CLI: PASS twice.
+
+**The settings.** Plan `claude-agent/sonnet` (Sonnet 5.5); Execute `claude-agent/haiku` ("small quick fixes in one file") and `claude-agent/sonnet` ("bigger changes across several files, new features"); Review `claude-agent/sonnet`; decider `ollama-cloud/clef:27b`. The `claude-agent` provider (`aisdk:@opencode/claude-agent`) lists no price, so OpenCode showed no cost for these turns.
+
+**The panel.** It now has no tabs. Prices sat beside each chosen model and in all 196 "Add a model" entries. "Cheapest first" put 48 "$0 or not listed" entries first, then 78 priced ones in ascending order (input, then output), then 70 "price not listed" ones last (every `claude-agent` model among them). Spot checks against the catalog: GLM-5.3 $1.40 in / $4.40 out, gpt-oss:20b $0.07 / $0.30. With no decider, the panel showed its warning, and the pill read "Relay on · no decider" with a warning icon. The pill's row opened the closed panel, and both warnings cleared when Clef was chosen again. The "Last choice" line updated by itself within 5 seconds of each decision.
+
+**One new chat in `relay-live-test`, Relay on.**
+
+| Sent | Relay's record | What happened |
+|---|---|---|
+| `/relay on` in a new chat | flag stored | the chat was created; nothing went to a model ($0.00) |
+| "In two sentences, what does src/text.js do?" | Plan, Sonnet, 90% sure, 398 ms | "Switched to Sonnet 5.5"; answered, and named the planted bug |
+| a one-line comment at the top of `src/text.js` | Execute, Haiku, 92%, line fit 97%, 471 ms | Haiku made exactly that edit |
+| a new `src/stats.js` and `src/index.js` | Execute, Sonnet, 93%, line fit 96%, 437 ms | Sonnet created both files |
+| "Review src/text.js and list any bugs you find." | Review, Sonnet, 92%, 553 ms | found the planted `slice(0)` bug on the first check; "Verdict: request changes" |
+| "Fix the blocking bug the review found in src/text.js." | Execute, Haiku, 93%, line fit 94%, 750 ms | `slice(0)` became `slice(1)` |
+| "Review src/text.js again and give your verdict." | Review, Sonnet, 86%, 470 ms | "This is the second check of this work … Verdict: approve." |
+| `/relay what does @src/calc.js export? …` | Plan, Sonnet, 42%, "not sure, so Plan" | decided once (the send carried Relay's marker); the file arrived as a file part; answered correctly |
+| `/relay do what the attached picture says.` with a pasted picture | Plan, Sonnet, 30%, "not sure, so Plan" | the picture never reached the chat (finding 2) |
+| the same as a plain message, before the fix | 57%, "not sure, so the chat stays as it is" | Desktop had put the chat on deepseek-v4-pro (finding 1), which cannot read pictures |
+| `/relay what does @assets/task.png say? …` | Plan, Sonnet, 80% | the picture arrived as an image part (`image/png`); Sonnet read it word for word |
+| a long request, then a second message about 2 seconds later | the second: Execute, 93%, "the chat was still busy after 0.3 seconds" | nothing was switched mid-answer; the second message queued |
+| (after the fixes) a small edit | Execute, Haiku | Desktop's model picker then read "Claude Agent / Haiku 5.5" |
+| `/relay off`; `/relay` a question; an ordinary follow-up | Plan, Sonnet | the picker followed to Sonnet, and the follow-up was answered by Sonnet (on `build`, finding 1) |
+| `/relay on`; a plain message with a pasted picture (after the fix) | Execute, Sonnet, 66%, "no line fits clearly, so the chat's model stays" | the picture counted; Sonnet read it and made the edit |
+| "Start a helper (subagent) to check src/stats.js for bugs …" | chat: Review, Sonnet, 69% | Sonnet named a model in the helper call, so Relay left the helper alone (finding 3) |
+
+A Superpowers run ("subagent-driven development", two small tasks) finished: two implementer helpers and four review helpers (two spec, two quality); `range()` was added and the new test file passed 15 of 15.
+
+**Findings.**
+
+1. Desktop sends its model picker's model and its agent with every message (in the message's `metadata.model` and `metadata.agent`), and OpenCode switches the chat to them before the plugin's `prompt` hook runs. The picker did not follow Relay's switches (seen with `claude-agent` models), so after a one-off `/relay` the next ordinary message went back to the picker's model (deepseek-v4-pro), and each switch showed two lines ("Switched to deepseek-v4-pro", then "Switched to Sonnet 5.5"). With Relay on, the hook switched again, so each message still reached Relay's pick. **Fixed:** the pill puts Relay's pick in the picker (`screen.composer.setModel`) once per new switch, while that chat is on screen; verified live. **Not fixable from a plugin:** the agent. The GUI API has no agent setter, so a message after a `/relay` to Plan or Review runs on `build`, with the model Relay chose.
+2. Desktop 2.3.0 sends a pasted picture as an upload: an "Attached file: `<temp path>`" line in the text and an entry in `metadata.attachments`, with no file part. Relay counted file parts only, so a pasted picture could go to a model without image input. **Fixed:** the switch's hook counts uploads, pictures by their `image/*` type and other files by name and size; verified live. The `/relay` command never receives Desktop's uploads (its input holds the text, @-mentioned files and agents), so a picture pasted into a `/relay` message is lost before Relay sees it. An @-mentioned picture works.
+3. Superpowers' subagent-driven development, run by Sonnet, named a model in every helper call (`claude-agent/sonnet`; its first try named `anthropic/claude-sonnet-5-5`, which is not connected here). By design Relay leaves such a helper alone, so none of the four checks was routed or recorded. They ran on Sonnet because the caller picked it, and Sonnet is also the Review model. A plain "start a helper to check …" from Sonnet also named its model. On 16 Nov deepseek-v4-pro started a helper without naming one, and Relay routed it.
+4. A `/relay` message with an @-mention shows the mention's highlight seven characters late: OpenCode gives the command the text without "/relay " but keeps the mention's position in the whole line. Cosmetic; not changed.
+5. Desktop replaced the background service twice during the check (09:36 and 09:40 UTC), again after the service went silent for over a minute while loading plugins for a project, as seen since 10 Nov. Relay's calls made while plugins were loading waited about 24.5 seconds and then failed with HTTP 400, and Desktop's window needed a reload to show the panel again.
+6. A Desktop started with the debugging port passes the listening socket to the background service it starts. After Desktop was restarted normally, 127.0.0.1:9333 still accepted connections and answered nothing, until that service is next replaced.
+
+**Cost.** The Claude turns used the owner's `claude-agent` provider, for which OpenCode lists no price. Clef made about 20 decisions, about a cent at $0.24 per million input tokens. Three turns went to deepseek-v4-pro before the picker fix; OpenCode showed $0.02 on that chat.
+
+**Not tested:** the interactive terminal app; a real decider on Linux and macOS (CI uses a mock model and no decider); a helper started without a model by a Claude caller; the Try box with these settings.

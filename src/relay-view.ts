@@ -52,6 +52,20 @@ export function tryLine(result: Shown & Pick<Decision, 'costUsd'>): string {
 export const privacyNote = (providerID: string | null) =>
   `To choose, Relay sends to ${providerID ?? "the decider's provider"}: your message text (at most ${MAX_CHARS.toLocaleString('en-US')} characters), the names and sizes of attached files (the first ${MAX_FILE_NAMES}), how many pictures are attached, whether the chat's agent can change files, and the lines you wrote above. Never the contents of files, pictures or earlier messages. While a decider and a Review model are chosen, the task text of each helper that a model starts is sent the same way — written by the calling model, so it may itself quote code, files or earlier chat, and the person does not see it before it goes out.`;
 
+/**
+ * The model to put in Desktop's model picker after Relay switched a chat. Desktop sends the picker's model with every message (seen on
+ * 2.3.0, 17 Nov), so a picker left on the old model would undo the switch on the next one. Null for a helper's record and when nothing was switched.
+ */
+// shortcut: the record keeps the model as "provider/id#variant", so an id that itself holds a "#" and has no variant is cut at that "#".
+export function pickerModel(decision: Pick<Decision, 'kind' | 'model'>): { providerID: string; modelID: string; variant?: string } | null {
+  if (decision.kind !== 'chat' || decision.model === null) return null;
+  const slash = decision.model.indexOf('/'); if (slash <= 0) return null;
+  const rest = decision.model.slice(slash + 1), hash = rest.lastIndexOf('#');
+  const modelID = hash < 0 ? rest : rest.slice(0, hash), variant = hash < 0 ? undefined : rest.slice(hash + 1);
+  if (!modelID || variant === '') return null;
+  return { providerID: decision.model.slice(0, slash), modelID, ...(variant === undefined ? {} : { variant }) };
+}
+
 export const noDeciderNote = "No decider chosen. Until you choose one below, /relay and Relay on send every message to the chat's current model without switching.";
 
 type PillRow = { id: 'toggle' | 'decider' | 'last'; label: string; tone?: 'warning' };

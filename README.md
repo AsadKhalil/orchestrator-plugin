@@ -2,7 +2,7 @@
 
 **Relay picks the right model for each message in OpenCode.** You choose models for three kinds of work, Plan, Execute and Review, once. Then you type `/relay <message>`, or turn Relay on for a chat. A small decision model reads the message, picks the kind of work and the model that fits it, switches the chat to that model, and sends your message. The answer appears in the same chat.
 
-> Relay is early. It is built for OpenCode 2.3.0. It has run against tests, an isolated OpenCode with a mock model, and one live check in a full OpenCode Desktop setup on Windows with real models (16 Nov 2026). See [Status](#status).
+> Relay is early. It is built for OpenCode 2.3.0. It has run against tests; in an isolated OpenCode with a mock model, on Linux, macOS and Windows, on every push; and in live checks in a full OpenCode Desktop setup on Windows, with Ollama Cloud models (16 Nov 2026) and Claude models (17 Nov 2026). See [Status](#status).
 
 (The package and its internal ids are still named `feature-pilot`. That is on purpose: renaming them would lose saved settings.)
 
@@ -65,7 +65,7 @@ The settings are shared by all your projects. The terminal app has no settings s
 | `/relay off` | This chat goes back to normal. |
 
 - In Desktop, the **Relay pill** above the chat box shows whether Relay is on for that chat. Click it to turn Relay on or off there, and to see the last choice. With no decider chosen it reads **Relay on · no decider**, and its menu opens the Relay panel.
-- OpenCode shows a "Switched to …" line in the chat when Relay changes the model.
+- OpenCode shows a "Switched to …" line in the chat when Relay changes the model, and Desktop's model picker follows Relay's choice.
 - Plan and Review use OpenCode's `plan` agent, which is meant for reading and planning, not editing. Only Execute uses `build`, which can change files.
 - When the decision model is not sure (under 60%), `/relay` uses Plan. With `/relay on`, the chat stays as it is.
 - In the terminal app, `/relay`, `/relay on` and `/relay off` work the same way. There is no pill there, and `/relay on` prints nothing.
@@ -78,10 +78,11 @@ OpenCode makes every request, with your OpenCode login. Relay never sees your AP
 
 ## Status
 
-- **Ran on a real OpenCode 2.3.0, isolated, with a mock model (Windows):** the plugin loads; `/relay` is registered; with no decider, a message goes once to the chat's own model; `/relay on` makes each message go through Relay once, and `/relay off` stops it. In throwaway checks, a model or agent switch made as a message is sent served that same message.
+- **Ran on a real OpenCode 2.3.0, isolated, with a mock model (Linux, macOS and Windows, in GitHub's checks on every push):** the plugin installs from its package and loads; `/relay` is registered; with no decider, a message goes once to the chat's own model; `/relay on` makes each message go through Relay once, and `/relay off` stops it. In throwaway checks, a model or agent switch made as a message is sent served that same message.
 - **Ran against a real decision model:** 30 made-up messages, twice, with `opencode/jev-1.13-free` from an isolated OpenCode with no login.
 - **Ran in a full OpenCode Desktop setup (Windows, Ollama Cloud models, 16 Nov 2026):** the Modes tab and its Try box; `/relay` placing messages on the Plan, Execute and Review models; the pill and `/relay on` turning the switch on and off; plain messages with the switch on (placed) and off (left alone); a helper that checks work starting on the Review model. This check found and fixed one bug: after a Plan answer, a clear "fix …" request was judged unsure and stayed on Plan.
-- **Not yet run in a full setup:** pictures and attached files, the interactive terminal app, macOS and Linux, and the install steps above followed by a new user.
+- **Ran in a full OpenCode Desktop setup with Claude models (Windows, 17 Nov 2026):** six plain messages with Relay on, each answered by its mode's model (Sonnet for Plan and Review, Haiku or Sonnet for Execute by their "use it for" lines); a review cycle that found a planted bug on the first check and approved the fix on the second; `/relay` with an @-mentioned file and an @-mentioned picture; a pasted picture with Relay on; a busy chat; and the panel's prices, Cheapest first, Recent choices and warning. It found and fixed two problems with Desktop: its model picker did not follow Relay's switches, and pasted pictures were not counted.
+- **Not yet run in a full setup:** the interactive terminal app, Relay with a real decision model on macOS and Linux, and the install steps above followed by a new user.
 - **Removed on 17 Nov 2026:** the older feature pipeline in the side panel (the Run, Spend and More tabs). Anything it saved is left in place and ignored.
 
 Details are in the [compatibility findings](docs/compatibility.md) and the [change log](docs/implementation-progress.md).
@@ -91,6 +92,9 @@ Known limits:
 - Decision requests are not counted against any budget.
 - With `/relay on`, a chat that is busy answering is not switched; the new message goes to the model already in use. `/relay` waits up to two minutes for a busy chat.
 - A file's size is guessed at four bytes per token, so a file close to a model's limit can still be too big for it.
+- In Desktop, a picture pasted into a `/relay` message is lost before Relay sees it: OpenCode gives a command only the text and @-mentioned files. @-mention the picture instead, or paste it into a plain message with Relay on.
+- Desktop sends its own agent with every message, and a plugin cannot change it. So the message after a one-off `/relay` to Plan or Review runs on Build, with the model Relay picked. With `/relay on`, every message is placed again.
+- When the model that starts a helper names the helper's model itself, Relay leaves the helper alone. Claude models and Superpowers did this in the live check, so their review helpers kept the model they chose.
 - Plan and Review rely on OpenCode's `plan` agent not editing. Another plugin can change that: in the live check, with the Plannotator plugin installed, a Plan turn submitted a plan and then edited a file.
 
 ## Contributing

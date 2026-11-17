@@ -1,7 +1,7 @@
 import type { PromptInput } from '@opencode/schema/prompt-input';
 import type { Session } from '@opencode/schema/session';
 import { within } from './decider.js';
-import { placeMessage, recordPlaced, timingOf, type RelayDeps } from './relay-command.js';
+import { placeMessage, recordPlaced, timingOf, uploadsOf, type RelayDeps } from './relay-command.js';
 import { chatSwitch } from './relay-store.js';
 
 // The switch. In a chat where `/relay on` (or the pill) turned it on, every message the person sends is placed the way `/relay` places one,
@@ -25,7 +25,7 @@ export function relayAutoHook(deps: RelayDeps) {
       // shortcut: the hook holds a message for at most three read limits; work still running then goes on without it, so a host call that
       // answers very late could switch the chat during the reply. The hook also does not wait for a `/relay` of the same chat that is still running.
       await within(async () => {
-        const placed = await placeMessage(deps, timing, { sessionID, prompt, unsure: 'stay' });
+        const placed = await placeMessage(deps, timing, { sessionID, prompt, unsure: 'stay', uploads: uploadsOf(event.metadata) });
         // The record is for the panel; the message does not wait for it. recordPlaced never rejects.
         void recordPlaced(deps, sessionID, placed);
       }, timing.readMs * 3);
