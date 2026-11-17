@@ -7,7 +7,7 @@ import type { Mode, RelaySettings } from '../src/relay-store.js';
 
 type Picked = { choice: string; confidence: number };
 export type FakeReply = Picked & { lines?: Partial<Record<Mode, Picked>> };
-type Step = 'owned' | 'get' | 'wait' | 'switchAgent' | 'switchModel' | 'put' | 'remove' | 'prompt' | 'models' | 'storageGet' | 'storageSet';
+type Step = 'get' | 'wait' | 'switchAgent' | 'switchModel' | 'put' | 'remove' | 'prompt' | 'models' | 'storageGet' | 'storageSet';
 export type FakeOptions = {
   /** Default: plan [p/plan], execute [p/exec#high], review [p/review], no lines, decider d/judge. */
   settings?: Partial<RelaySettings>;
@@ -17,7 +17,7 @@ export type FakeOptions = {
   decision?: FakeReply | Error | 'never' | ((request: DecisionsRequest) => FakeReply);
   /** The decider's time limit in this fake; default 5000. */
   decideMs?: number;
-  owned?: boolean; busyMs?: number; waitMs?: number; sizeMs?: number; readMs?: number;
+  busyMs?: number; waitMs?: number; sizeMs?: number; readMs?: number;
   /** A file's size by its address; default 2048 bytes. `never` does not answer. */
   sizes?: Record<string, number | null | Error | 'never'>;
   fail?: Partial<Record<Step, Error>>;
@@ -61,7 +61,6 @@ export function fakeRelay(options: FakeOptions = {}) {
     },
     chatModels: async () => step('models', undefined, () => fakeModels),
     decide: (decider, input) => decide({ decisions }, decider, input, options.decideMs),
-    owned: async sessionID => step('owned', sessionID, () => options.owned ?? false),
     fileSize: async uri => {
       calls.push({ name: 'size', input: uri });
       const size = options.sizes?.[uri];

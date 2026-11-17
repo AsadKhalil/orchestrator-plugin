@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checksLine, decisionLine, pillView, priceLabel, privacyNote, switchHint, tryLine } from '../src/relay-view.js';
+import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
 import { buildDecisionRequest, MAX_CHARS, MAX_FILE_NAMES } from '../src/decider.js';
 
 const chat = { kind: 'chat' as const, mode: 'execute' as const, model: 'p/exec#high' as string | null, confidence: 0.98 as number | null, fit: null as number | null, ms: 150, note: null as string | null };
@@ -42,10 +42,10 @@ test('the panel says what is sent to the decider and to whom, with the limits th
 });
 
 test('the pill says whether every message in this chat goes through Relay, offers to turn it, and shows the last choice there', () => {
-  assert.deepEqual(pillView({ on: false, last: null }), { label: 'Relay off', tone: undefined, rows: [{ id: 'toggle', label: 'Turn Relay on for this chat' }, { id: 'last', label: 'No choice in this chat yet.' }] });
-  const on = pillView({ on: true, last: chat });
+  assert.deepEqual(pillView({ on: false, last: null, decider: true }), { label: 'Relay off', tone: undefined, rows: [{ id: 'toggle', label: 'Turn Relay on for this chat' }, { id: 'last', label: 'No choice in this chat yet.' }] });
+  const on = pillView({ on: true, last: chat, decider: true });
   assert.deepEqual([on.label, on.tone, on.rows[0].label, on.rows[1].label, on.rows[1].tone], ['Relay on', 'success', 'Turn Relay off for this chat', 'Last choice: Execute, p/exec#high, 98% sure, 150 ms.', undefined]);
-  assert.equal(pillView({ on: true, last: { ...chat, model: null, note: 'the chat was still busy after 0.3 seconds' } }).rows[1].tone, 'warning', 'nothing was switched');
+  assert.equal(pillView({ on: true, last: { ...chat, model: null, note: 'the chat was still busy after 0.3 seconds' }, decider: true }).rows[1].tone, 'warning', 'nothing was switched');
 });
 
 test('the Modes tab says how to turn Relay on for every message in one chat', () => {
@@ -56,4 +56,33 @@ test('the panel says whether helpers that check work get a Review model', () => 
   assert.equal(checksLine({ active: true, note: null }), 'Helpers that check work start on a Review model.');
   assert.equal(checksLine({ active: false, note: 'no decider chosen' }), "Helpers that check work keep the chat's model: no decider chosen.");
   assert.equal(checksLine({ active: false, note: null }), "Helpers that check work keep the chat's model: not set up.");
+});
+
+test('with no decider chosen the pill says that Relay switches nothing, and offers to open the panel', () => {
+  const on = pillView({ on: true, last: null, decider: false });
+  assert.deepEqual([on.label, on.icon, on.tone], ['Relay on · no decider', 'circle-exclamation', 'warning']);
+  assert.deepEqual(on.rows.map(row => [row.id, row.tone ?? null]), [['toggle', null], ['decider', 'warning'], ['last', null]]);
+  assert.equal(on.rows[1].label, 'No decider chosen, so Relay switches nothing. Open Relay to choose one.');
+  const off = pillView({ on: false, last: null, decider: false });
+  assert.deepEqual([off.label, off.icon, off.tone, off.rows[1].id], ['Relay off', undefined, undefined, 'decider'], 'switched off, the capsule stays quiet; the menu still says why /relay would switch nothing');
+  assert.equal(pillView({ on: true, last: null, decider: true }).icon, undefined);
+});
+
+test('the panel warns, before anything else, when no decider is chosen', () => {
+  assert.equal(noDeciderNote, "No decider chosen. Until you choose one below, /relay and Relay on send every message to the chat's current model without switching.");
+});
+
+test('a recent choice reads as one line, and says whether it was for a chat or a helper', () => {
+  assert.equal(recentLine(chat), 'Chat: Execute, p/exec#high, 98% sure, 150 ms.');
+  assert.equal(recentLine({ ...chat, kind: 'helper', mode: 'review', model: 'p/review', confidence: 0.92, ms: 342 }), 'Helper: Review, p/review, 92% sure, 342 ms.');
+  assert.equal(recentLine({ ...chat, mode: null, model: null, confidence: null, note: 'no decider chosen' }), 'Chat: nothing switched (no decider chosen).');
+  assert.equal(recentLine({ ...chat, kind: 'helper', model: null, note: 'not a check' }), 'Helper: left as it was (not a check).');
+});
+
+test('cheapest first sorts by the input price, then the output price, compared exactly, with prices not listed last', () => {
+  const model = (name: string, input: string | null, output: string | null) => ({ name, cost: { inputPerMillion: input, outputPerMillion: output, tiered: false } });
+  const list = [model('none', null, null), model('b', '0.3', '1.2'), model('zero', '0', '0'), model('a', '0.3', '0.6'), model('tiny', '0.000001', '0'), model('big', '10', '30'), model('half', null, '1'), model('a2', '0.3', '0.6')];
+  assert.deepEqual([...list].sort(cheapestFirst).map(item => item.name), ['zero', 'tiny', 'a', 'a2', 'b', 'big', 'half', 'none']);
+  // Prices are compared as exact decimals: the same price written two ways ties, and the name decides.
+  assert.equal(cheapestFirst(model('x', '0.3', '0'), model('y', '0.30', '0')), 'x'.localeCompare('y'));
 });

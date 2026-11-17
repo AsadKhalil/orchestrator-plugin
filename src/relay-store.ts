@@ -1,7 +1,8 @@
 import { offered, validateChoices, type ModelChoice, type OfferedModel } from './settings.js';
 
 // What Relay keeps in plugin storage. The host shares plugin storage between projects, so there is one set of settings and one list of decisions.
-// shortcut: Relay's own queue below, not settings.ts's `serial`, so a stuck Relay read or write can never hold up the older pipeline's getSelections/getPolicy (they serialize on a separate queue).
+// shortcut: one queue for this loaded module, so its own reads and writes never interleave. A second process writing the same keys is not
+// held back by it; with no compare-and-set in stock storage, a save from two OpenCode processes in the same instant can still lose one.
 let queue: Promise<void> = Promise.resolve();
 function serial<T>(task: () => Promise<T>): Promise<T> {
   const result = queue.then(task); queue = result.then(() => undefined, () => undefined); return result;

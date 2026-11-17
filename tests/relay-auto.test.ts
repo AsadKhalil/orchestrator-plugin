@@ -30,12 +30,11 @@ test('with the switch on, a message is placed like /relay places one and recorde
   assert.deepEqual(review.calls.find(call => call.name === 'put')?.input, { sessionID: 'ses-1', key: 'relay-review-rules', value: reviewRules });
 });
 
-test('a chat with the switch off, a message /relay already placed, a blank message and a pipeline chat are left alone', async () => {
+test('a chat with the switch off, a message /relay already placed and a blank message are left alone', async () => {
   for (const [label, f, input] of [
     ['off', fakeRelay(), event('fix the login test')],
     ['marked by /relay', turnOn(fakeRelay()), event('fix the login test', { relay: 'sent' })],
     ['blank', turnOn(fakeRelay()), event('   ')],
-    ['pipeline chat', turnOn(fakeRelay({ owned: true })), event('fix the login test')],
   ] as const) {
     await relayAutoHook(f.deps)(input);
     assert.equal(names(f).includes('decisions'), false, `${label}: no decider request`);
@@ -77,10 +76,6 @@ test('a call that never answers or throws never holds the message long, and the 
   models.deps.chatModels = () => new Promise(() => undefined);
   assert.equal(await settles(relayAutoHook(models.deps)(event('fix it')), 300), true, 'the model list hangs');
   assert.match((await last(models)).note!, /did not answer within 0\.02 seconds/);
-  const owned = turnOn(fakeRelay({ readMs: 20 }));
-  owned.deps.owned = () => new Promise(() => undefined);
-  assert.equal(await settles(relayAutoHook(owned.deps)(event('fix it')), 300), true, 'the ownership check hangs');
-  assert.equal(names(owned).includes('decisions'), false);
   const switching = turnOn(fakeRelay({ readMs: 20 }));
   switching.deps.session.switchModel = () => new Promise(() => undefined);
   assert.equal(await settles(relayAutoHook(switching.deps)(event('fix it')), 300), true, 'a model switch never answers');

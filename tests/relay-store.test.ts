@@ -1,14 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX, chatSwitch, setChatSwitch } from '../src/relay-store.js';
-import { getSelections } from '../src/settings.js';
-
-/** Whether a promise settles (either way) within `ms`, instead of hanging. */
-const settles = async (promise: Promise<unknown>, ms: number): Promise<boolean> => {
-  const late = Symbol('late');
-  const result = await Promise.race([promise.then(() => true, () => true), new Promise(done => setTimeout(() => done(late), ms))]);
-  return result !== late;
-};
 
 function store() { const map = new Map<string, unknown>(); return { map, async get(k: string) { return structuredClone(map.get(k)); }, async set(k: string, v: unknown) { await new Promise(r => setTimeout(r, 2)); map.set(k, structuredClone(v)); } }; }
 const chat = [{ providerID: 'p', id: 'm', enabled: true, status: 'active', variants: ['high'] }];
@@ -104,10 +96,3 @@ test("a chat's switch starts off, turns on and off, is per chat, and anything bu
 });
 
 test('model names', () => { assert.equal(modelName(high), 'p/m#high'); assert.equal(modelName(judge), 'd/judge'); assert.equal(modelName(plain), 'p/m#high'); });
-
-test('Relay keeps its own storage queue, separate from the old pipeline\'s: a pending Relay write does not hold up a settings.ts read', async () => {
-  const db = store();
-  const pending = { ...db, set: () => new Promise<void>(() => undefined) };   // never resolves
-  void recordDecision(pending, { sessionID: 'ses-1', kind: 'chat', mode: 'plan', confidence: 0.9, fit: null, model: 'p/m', ms: 1, costUsd: '0', note: null, at: 'now' });
-  assert.equal(await settles(getSelections({ async get() { return undefined; }, async set() { /* unused */ } }, 'dir'), 200), true, "an unrelated settings.ts read must not wait behind Relay's own queue");
-});

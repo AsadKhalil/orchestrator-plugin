@@ -103,11 +103,9 @@ test('a busy chat is waited for before any switch; after the ceiling, or when th
   assert.equal((await last(broken)).note, 'could not wait for the chat: no such chat');
 });
 
-test('blank text, a pipeline chat and a chat Relay cannot place are refused, and nothing is sent', async () => {
+test('blank text is refused, and nothing is asked or sent', async () => {
   const f = fakeRelay(); await assert.rejects(run(f, { ...typed, text: '  \n' }), /type your message after \/relay/);
-  const g = fakeRelay({ owned: true }); await assert.rejects(run(g), /does not work in a chat that a Relay run created/);
-  const h = fakeRelay({ fail: { owned: new Error('storage offline') } }); await assert.rejects(run(h), /storage offline/);
-  assert.deepEqual([names(f), names(g), names(h)], [[], ['owned'], ['owned']]);
+  assert.deepEqual(names(f), []);
 });
 
 test('/relay on and /relay off turn the switch for this chat, in any case and with spaces around, and send nothing', async () => {
@@ -119,9 +117,6 @@ test('/relay on and /relay off turn the switch for this chat, in any case and wi
   assert.deepEqual(prompts(f), []); assert.equal(names(f).includes('decisions'), false, 'a toggle asks the decider nothing');
   assert.equal(await last(f), undefined, 'a toggle is not a decision');
   assert.equal(await switchedOn(f, 'ses-2'), false, 'only this chat');
-  const g = fakeRelay({ owned: true });
-  await assert.rejects(run(g, { ...typed, text: 'on' }), /does not work in a chat that a Relay run created/);
-  assert.equal(await switchedOn(g), false);
   const h = fakeRelay(); await run(h, { ...typed, text: 'on second thought, fix the login test' });
   assert.deepEqual([prompts(h).length, await switchedOn(h)], [1, false], 'anything more than on or off is a message');
 });
@@ -153,10 +148,10 @@ test('two /relay messages in one chat run one after the other, each on its own m
   assert.equal(prompts(g).length, 2, 'a failed message does not block the next one in that chat');
 });
 
-test('the one typed first joins the queue first, even when its own ownership check answers later than the second one\'s', async () => {
+test('the one typed first is sent first, even when its own chat read answers later than the second one\'s', async () => {
   const h = fakeRelay({ decision: request => ({ choice: request.input[0].text.includes('first') ? 'execute' : 'plan', confidence: 0.9 }) });
-  let nth = 0;
-  h.deps.owned = async () => { const mine = ++nth; await sleep(mine === 1 ? 40 : 0); return false; };
+  let nth = 0; const get = h.deps.session.get;
+  h.deps.session = { ...h.deps.session, get: async input => { const mine = ++nth; await sleep(mine === 1 ? 40 : 0); return get(input); } };
   const slow = relayCommand(h.deps), goSlow = (text: string) => slow.execute({ sessionID: 'ses-1', prompt: { ...typed, text }, delivery: 'steer' } as never);
   await Promise.all([goSlow('first'), goSlow('second')]);
   assert.deepEqual(prompts(h).map(p => (p as { text: string }).text), ['first', 'second']);
@@ -172,14 +167,6 @@ test('a host call that never answers still sends the message once, and does not 
   assert.equal(await settles(second, 200), true, 'a later call in the same chat must not be jammed by the first');
   assert.deepEqual(prompts(f).map(p => (p as { text: string }).text), ['fix the login test', 'second']);
   assert.match((await last(f)).note!, /did not answer within 0\.02 seconds/);
-});
-
-test('ownership cannot be checked in time: /relay refuses rather than risk a pipeline chat, and does not hang', async () => {
-  const f = fakeRelay({ readMs: 20 });
-  f.deps.owned = () => new Promise(() => undefined);
-  const outcome = relayCommand(f.deps).execute({ sessionID: 'ses-1', prompt: typed, delivery: 'steer' } as never).then(() => 'resolved', (error: Error) => error.message);
-  assert.equal(await settles(outcome, 200), true, 'must not hang');
-  assert.match(await outcome, /could not tell whether this chat belongs to a pipeline run/);
 });
 
 test('a failure of storage, the chat lookup or the model list still sends once, unchanged', async () => {

@@ -8,7 +8,6 @@ import type { ListedModel } from './inventory.js';
 import { getRelaySettings, modelName, recordDecision, setChatSwitch, type Decision, type RelayStore } from './relay-store.js';
 import { brief, linesFor, REVIEW_RULES_KEY, reviewRules, route, type DeciderAnswer } from './router.js';
 import type { ModelChoice } from './settings.js';
-import { hostVariant } from './types.js';
 
 // `/relay <message>` in a normal chat: ask the decider which mode, and which of that mode's models, fit the message; put the chat on that agent and model; send the message.
 // The message is sent once and unchanged whatever goes wrong before the send, and the note in the record says what happened.
@@ -18,19 +17,24 @@ export type RelayDeps = {
   store: RelayStore;
   chatModels: () => Promise<ListedModel[]>;
   decide: (decider: ModelChoice | null, input: DecideInput) => Promise<DeciderAnswer>;
-  /** Whether a Relay run created the chat. */
-  owned: (sessionID: string) => Promise<boolean>;
   /** A file's size in bytes, or null when it is not a file on this machine. */
   fileSize: (uri: string) => Promise<number | null>;
   /** How long a busy chat is waited for before the message goes out unchanged. Default: two minutes. */
   waitMs?: number;
   /** How long reading one file's size may take. Default: one second. */
   sizeMs?: number;
-  /** How long the settings, the chat, the model list or the ownership check may take before Relay gives up on them. Default: five seconds. */
+  /** How long the settings, the chat or the model list may take before Relay gives up on them. Default: five seconds. */
   readMs?: number;
 };
 type Invocation = { readonly sessionID: Session.ID; readonly prompt: PromptInput.Prompt; readonly delivery: 'steer' | 'queue' };
 type AttachedFile = { readonly uri?: string; readonly name?: string };
+
+/**
+ * A variant as the host reports it, in a choice's terms. The host names "no variant requested" `default` (seen on 2.2.7, even for a model that has
+ * no variants), while a choice uses `null`; compared raw, a chat on its default variant would never match a choice.
+ */
+// shortcut: a model with a real variant literally named `default` is treated as having none, because the host reports both the same way.
+export const hostVariant = (variant: string | null | undefined): string | null => (variant === undefined || variant === 'default' ? null : variant);
 
 const PICTURE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 const bare = (uri: string) => uri.replace(/[?#].*$/, '');
@@ -137,9 +141,6 @@ export function relayCommand(deps: RelayDeps) {
       // One at a time in a chat: the next message waits for this one, whether this one works or not.
       // The queue is joined here, before anything is awaited, so two calls join it in the order they were made, not in the order their own checks happen to answer.
       const turn = (turns.get(input.sessionID) ?? Promise.resolve()).then(async () => {
-        const owned = await within(() => deps.owned(input.sessionID), readMs);
-        if (owned === LATE) throw new Error(`Relay: could not tell whether this chat belongs to a pipeline run within ${readMs / 1000} seconds.`);
-        if (owned) throw new Error('Relay: /relay does not work in a chat that a Relay run created.');
         if (toggle === null) return relay(input);
         // `/relay on` or `/relay off`: the switch for this chat. Nothing is sent, and nothing is decided.
         if (await within(() => setChatSwitch(deps.store, input.sessionID, toggle), readMs) === LATE) throw new Error(`Relay: the switch could not be saved within ${readMs / 1000} seconds.`);

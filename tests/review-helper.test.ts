@@ -62,7 +62,6 @@ test('every other helper is left as it is', async () => {
     [{ ...check, settings: { modes: { plan: [], execute: [], review: [] } } }, task, false, null],   // no Review model
     [{ ...check, settings: reviewers(entry('gone')) }, task, false, null],             // the only Review model is not offered
     [{ ...check, settings: { decider: null } }, task, false, null],                    // no decider
-    [{ ...check, owned: true }, task, false, null],                                    // a chat that a Relay run created
     [check, { agent: 'general' }, false, null],                                        // no task text
     [check, { ...task, prompt: '  ' }, false, null],                                   // blank task text
   ] as const) {
@@ -76,7 +75,7 @@ test('every other helper is left as it is', async () => {
 });
 
 test('an error inside the hook never stops a helper from starting, and the input is replaced, not changed in place', async () => {
-  for (const [fail, note] of [[{ owned: new Error('storage offline') }, 'helper left alone: storage offline'], [{ models: new Error('list failed') }, 'helper left alone: list failed'], [{ storageGet: new Error('storage offline') }, null], [{ storageSet: new Error('disk full') }, null]] as const) {
+  for (const [fail, note] of [[{ models: new Error('list failed') }, 'helper left alone: list failed'], [{ storageGet: new Error('storage offline') }, null], [{ storageSet: new Error('disk full') }, null]] as const) {
     const f = fakeRelay({ ...check, fail }), event = call({ ...task });
     await assert.doesNotReject(reviewHelperHook(f.deps)(event));
     assert.equal((await last(f))?.note ?? null, note);
@@ -103,10 +102,3 @@ test('a host call that never answers lets the helper start as it was, instead of
   assert.match((await last(f))?.note ?? '', /helper left alone: did not answer within 0\.02 seconds/);
 });
 
-test('ownership cannot be checked in time: the helper is left alone, not hung', async () => {
-  const f = fakeRelay({ ...check, readMs: 20 });
-  f.deps.owned = () => new Promise(() => undefined);
-  const event = call({ ...task });
-  assert.equal(await settles(reviewHelperHook(f.deps)(event), 200), true, 'the hook must give up and return, not hang');
-  assert.deepEqual(event.input, task, 'left alone');
-});

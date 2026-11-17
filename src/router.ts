@@ -1,9 +1,14 @@
 import { offered, type ModelChoice, type OfferedModel } from './settings.js';
 import { modes, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
-import { describeError } from './gui-model.js';
 
 // Pure rules: which of a mode's models can be used now, which "use it for" lines the decider is asked about, and what its answer means for the chat.
 // Nothing here calls the host, and nothing here may import from `node:` (the panel bundles this file).
+
+/** The error's own message when it has one, so a person sees why something was refused; else the fallback. */
+export function describeError(error: unknown, fallback: string): string {
+  const message = typeof error === 'string' ? error : error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : '';
+  return message.trim() ? message : fallback;
+}
 
 /** Below this the decider is not sure of the mode, and the mode is Plan. */
 export const UNSURE_BELOW = 0.6;

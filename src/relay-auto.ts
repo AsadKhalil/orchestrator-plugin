@@ -25,7 +25,6 @@ export function relayAutoHook(deps: RelayDeps) {
       // shortcut: the hook holds a message for at most three read limits; work still running then goes on without it, so a host call that
       // answers very late could switch the chat during the reply. The hook also does not wait for a `/relay` of the same chat that is still running.
       await within(async () => {
-        if (await within(() => deps.owned(sessionID), timing.readMs) !== false) return;
         const placed = await placeMessage(deps, timing, { sessionID, prompt, unsure: 'stay' });
         // The record is for the panel; the message does not wait for it. recordPlaced never rejects.
         void recordPlaced(deps, sessionID, placed);

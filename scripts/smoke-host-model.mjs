@@ -1,10 +1,9 @@
-// Real-host model-turn smoke: the packed plugin in an isolated OpenCode 2.3.0 server talking to a FREE loopback mock provider.
-// It proves that, on a host without atomic storage, the local-file budget ledger lets a planner turn reach a model and that a budget too
-// small for the worst case stops a request before it is sent. No credential, paid provider or real profile is involved; the only key is a
-// synthetic string the mock checks. Needs `npm run build` and FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary.
-// It also sends one `/relay` message in a normal chat on the mock model with no decider chosen (no switch, one request, one record), then
-// turns that chat's Relay switch on and off with `/relay on` and `/relay off` and checks what the `prompt` hook records.
-// It does NOT exercise the coder, reviewer, shell tool, permissions beyond the planner's, the Desktop panel, or a `/relay` switch (that needs a decision model).
+// Real-host smoke: the packed plugin, installed the way npm installs a package, in an isolated OpenCode 2.3.0 server that talks to a FREE
+// loopback mock provider. No credential, paid provider or real profile is involved; the only key is a synthetic string the mock checks.
+// Needs `npm run build` and FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary (default: `opencode` on the PATH).
+// It checks that the plugin loads and lists models; sends one `/relay` message in a normal chat with no decider chosen (no switch, one request,
+// one record); turns that chat's switch on with `/relay on`, keeps it across a server restart, and checks what the `prompt` hook records; then
+// turns it off with `/relay off`. It does NOT exercise a real switch (that needs a decision model), a helper, or the Desktop panel.
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -31,7 +30,7 @@ const npm = (args, cwd) => execFile(process.platform === 'win32' ? 'npm.cmd' : '
 const free = async () => { const l = createServer(); l.listen(0, '127.0.0.1'); await once(l, 'listening'); const { port } = l.address(); await new Promise(d => l.close(d)); return port; };
 const observed = []; const note = (label, value) => observed.push(`${label}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
 
-// The mock provider: records each request and answers a planner question reply in the OpenAI-compatible streaming format.
+// The mock provider: records each request and answers in the OpenAI-compatible streaming format.
 const requests = [];
 /** What each request looked like, cut short: enough to tell a chat turn from another kind of request, without the host's whole system text. */
 const shapes = [];
@@ -40,15 +39,14 @@ const mock = createHttpServer((req, res) => {
   req.on('end', () => {
     let input = {}; try { input = JSON.parse(body); } catch { /* ignore */ }
     if (req.url?.endsWith('/chat/completions')) {
-      requests.push({ model: input.model, effort: input.reasoning_effort, stream: input.stream, authorized: req.headers.authorization === `Bearer ${apiKey}` });
+      requests.push({ model: input.model, stream: input.stream, authorized: req.headers.authorization === `Bearer ${apiKey}` });
       const messages = Array.isArray(input.messages) ? input.messages : [];
       const text = message => typeof message?.content === 'string' ? message.content : Array.isArray(message?.content) ? message.content.map(part => part?.text ?? '').join(' ') : '';
       shapes.push({ model: input.model, roles: messages.map(message => message.role).join(','), tools: input.tools?.length ?? 0, system: text(messages.find(message => message.role === 'system')).slice(0, 60), last: text(messages.at(-1)).slice(0, 80) });
     }
-    const reply = JSON.stringify({ kind: 'questions', questions: [{ id: 'q1', question: 'Which option should the feature use?' }] });
     const base = { id: 'chatcmpl-smoke', object: 'chat.completion.chunk', created: 1, model: input.model };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
-    res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: reply }, finish_reason: null }] })}\n\n`);
+    res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: 'Hello from the mock model.' }, finish_reason: null }] })}\n\n`);
     res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`);
     res.end('data: [DONE]\n\n');
   });
@@ -64,7 +62,7 @@ async function start() {
   const instance = { child, log: '' };
   child.stdout.on('data', chunk => { instance.log += chunk.toString(); }); child.stderr.on('data', chunk => { instance.log += chunk.toString(); });
   const client = OpenCode.make({ baseUrl: `http://127.0.0.1:${port}`, headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` } });
-  const deadline = Date.now() + 60_000; let plugins;
+  const deadline = Date.now() + 120_000; let plugins;
   const loaded = () => (plugins?.data ?? []).some(item => JSON.stringify(item).includes('feature-pilot'));
   while (Date.now() < deadline && !loaded()) {
     if (child.exitCode !== null) throw new Error(`OpenCode exited: ${instance.log.slice(-1500)}`);
@@ -90,63 +88,19 @@ try {
   await npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', join(root, pack.filename)], project);
   await writeFile(join(project, 'opencode.json'), JSON.stringify({
     plugins: ['./node_modules/feature-pilot'],
+    // A normal chat carries the host's whole system text and tools, so the model needs room or the host compacts before the first turn.
     providers: { smoke: { name: 'Smoke', package: '@ai-sdk/openai-compatible', env: ['SMOKE_API_KEY'], settings: { baseURL: `http://127.0.0.1:${mockPort}/v1` },
-      models: { 'model-one': { name: 'Model One', limit: { context: 8000, output: 1000 }, variants: [{ id: 'high', settings: { reasoningEffort: 'high' } }] }, 'model-two': { name: 'Model Two', limit: { context: 8000, output: 1000 } },
-        // A normal chat carries the host's whole system text and tools. In 8,000 tokens the host compacts before the first turn, so the /relay chat gets a model with room.
-        'model-chat': { name: 'Model Chat', limit: { context: 200000, output: 1000 } } } } },
+      models: { 'model-chat': { name: 'Model Chat', limit: { context: 200000, output: 1000 } } } } },
   }));
   const { FeaturePilot } = await import(pathToFileURL(join(project, 'node_modules', 'feature-pilot', 'dist', 'rpc.js')).href);
   server = await start();
   const options = { location: { directory: project } };
   const rpc = () => server.client.rpc(FeaturePilot);
 
-  // The mock model must show up, enabled, with its variant, before anything can be selected.
+  // The mock model must show up, enabled, before a chat can use it.
   let found; const seen = Date.now() + 60_000;
-  while (Date.now() < seen) { const models = (await rpc().listModels({}, options)).models; found = models.find(model => model.providerID === 'smoke' && model.id === 'model-one'); if (found?.enabled && models.some(model => model.providerID === 'smoke' && model.id === 'model-two' && model.enabled)) break; await sleep(500); }
-  assert.ok(found?.enabled, `smoke/model-one did not become available: ${JSON.stringify(found)}`); note('mock model', { enabled: found.enabled, variants: found.variants, limit: found.limit });
-
-  const choice = { providerID: 'smoke', id: 'model-one', variant: 'high' }, reviewer = { providerID: 'smoke', id: 'model-two', variant: null };
-  // The run needs a route for every role before it plans; the reviewer uses a different (pretend) vendor.
-  await rpc().saveSelections({ revision: 0, roles: { planner: [choice], coder: [choice], reviewer: [reviewer] } }, options);
-  const rate = { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: null, cacheWritePerMillion: null, billing: 'metered_api', serviceTier: 'standard', interactive: true, conditions: [], evidence: { sourceURL: 'https://example.com/synthetic-price', checkedAt: '2026-11-12T00:00:00Z', kind: 'user_entered', verified: false } };
-  await rpc().savePolicy({ revision: 0, maxOutputTokens: 1000, coderEnabled: false, routes: [{ ...choice, vendor: 'smoke', canonicalID: 'smoke-model-one', modelVersion: '1', rate }, { ...reviewer, vendor: 'other', canonicalID: 'other-model-two', modelVersion: '1', rate }] }, options);
-  // Worst case of one request = 8000 context tokens x $3/M + 1000 output tokens x $15/M = $0.039.
-  assert.equal((await rpc().setBudget({ scope: 'monthly', runID: null, amount: '5', revision: 0 }, options)).monthly.revision, 1);
-
-  const drive = async (requirement, featureBudget) => {
-    const run = (await rpc().createDraft({ requirement }, options)).run;
-    await rpc().setBudget({ scope: 'feature', runID: run.id, amount: featureBudget, revision: 0 }, options);
-    await rpc().driveDraft({ id: run.id, autonomous: false }, options);
-    let state; const until = Date.now() + 240_000; // the host's first use of a provider can take over a minute
-    while (Date.now() < until) { state = (await rpc().getDraft({ id: run.id }, options)).run; if (state.attention || !['planning'].includes(state.state)) break; await sleep(300); }
-    return { run, state };
-  };
-
-  // A budget below the worst case must stop the request before it is sent.
-  const tight = await drive('Tight budget feature', '0.01');
-  note('tight budget run stopped with', tight.state.attention ?? tight.state.state);
-  assert.equal(requests.length, 0, 'a budget below the worst case must not let a request out');
-  assert.ok(tight.state.attention, 'the tight run should have paused with a reason');
-  await rpc().stopDraft({ id: tight.run.id, revision: tight.state.revision }, options);
-
-  // A budget above the worst case lets exactly one planner request through, recorded in the local ledger.
-  const funded = await drive('Funded feature', '1');
-  note('funded run stopped with', funded.state.attention ?? funded.state.state);
-  assert.equal(requests.length, 1, `expected exactly one request, got ${requests.length}`);
-  assert.deepEqual(requests[0], { model: 'model-one', effort: 'high', stream: true, authorized: true });
-  const budget = await rpc().getBudget({ runID: funded.run.id }, options);
-  note('ledger after the turn', { backend: budget.backend, featureUsage: budget.featureUsage, monthlyUsage: budget.monthlyUsage });
-  assert.equal(funded.state.state, 'clarifying', `the planner's question reply was not accepted: ${funded.state.state}/${funded.state.attention}`);
-  assert.match(JSON.stringify(funded.state.clarification), /Which option should the feature use/);
-  assert.equal(budget.backend, 'local_file'); assert.equal(budget.featureUsage.pendingCount, 1);
-  assert.equal(budget.featureUsage.pendingUsd, '0.039', 'the reservation is the worst case for one request');
-  assert.equal(budget.monthlyUsage.pendingCount, 1, 'the refused request left no reservation behind');
-  assert.ok(existsSync(join(root, 'data', 'opencode', 'feature-pilot', 'ledger.sqlite')));
-
-  // The reservation outlives a server restart (it is in the file, not in memory), so spend cannot be forgotten.
-  await stop(server); server = await start();
-  const after = await rpc().getBudget({ runID: funded.run.id }, options);
-  assert.deepEqual([after.featureUsage.pendingCount, after.featureUsage.pendingUsd], [1, '0.039'], 'the reservation survived the restart');
+  while (Date.now() < seen) { found = (await rpc().listModels({}, options)).models.find(model => model.providerID === 'smoke' && model.id === 'model-chat'); if (found?.enabled) break; await sleep(500); }
+  assert.ok(found?.enabled, `smoke/model-chat did not become available: ${JSON.stringify(found)}`); note('mock model', { enabled: found.enabled, limit: found.limit });
 
   // `/relay` in a normal chat with no decider chosen: the real host has the command, the message reaches the chat's own (mock) model once,
   // the chat stays as it was, and the decision is recorded. The switch itself needs a decision model, which no mock can be, so it is not run here.
@@ -183,6 +137,9 @@ try {
   };
   await server.client.session.command({ sessionID: chat.id, name: 'relay', text: 'on' });
   assert.equal((await rpc().getRelayChat({ sessionID: chat.id }, options)).on, true, '/relay on turned the switch on');
+  // The switch lives in plugin storage, not in memory, so it outlives a server restart.
+  await stop(server); server = await start();
+  assert.equal((await rpc().getRelayChat({ sessionID: chat.id }, options)).on, true, 'the switch survived a server restart');
   const before1 = await records();
   await send(() => server.client.session.prompt({ sessionID: chat.id, text: 'A plain message with the switch on.' }), 'plain message, switch on');
   assert.equal(await records(), before1 + 1, 'the hook placed and recorded the plain message');
@@ -192,12 +149,12 @@ try {
   assert.equal((await rpc().getRelayChat({ sessionID: chat.id }, options)).on, false, '/relay off turned it off');
   await send(() => server.client.session.prompt({ sessionID: chat.id, text: 'A plain message with the switch off.' }), 'plain message, switch off');
   assert.equal(await records(), before1 + 2, 'with the switch off nothing is placed');
-  note('switch', 'on: one record per plain message, a /relay message decided once; off: none');
+  note('switch', 'on: kept across a restart, one record per plain message, a /relay message decided once; off: none');
 
   const version = (await execFile(cli, ['--version'], { timeout: 20_000, env: isolated })).stdout.trim();
-  console.log(`PASS: on stock ${version} the local-file ledger let one planner request reach the mock model, refused one that did not fit its budget, and kept the reservation across a restart; /relay with no decider sent one message to the chat's own mock model and recorded it; /relay on made the hook place each message once, and /relay off stopped it`);
+  console.log(`PASS: on stock ${version} (${process.platform}) the packed plugin loaded from node_modules; /relay with no decider sent one message to the chat's own mock model and recorded it; /relay on kept the switch across a restart and placed each plain message once; /relay off stopped it`);
   for (const line of observed) console.log(`OBSERVED ${line}`);
-  console.log('LIMIT: mock provider only; no coder, reviewer, shell tool, worktree run, real pricing or Desktop panel was exercised');
+  console.log('LIMIT: mock provider only; no decision model (so no real switch), no helper, and no Desktop panel was exercised');
 } catch (error) {
   for (const line of observed) console.error(`OBSERVED ${line}`);
   console.error(`MOCK REQUESTS: ${JSON.stringify(requests)}`);

@@ -10,7 +10,7 @@ type ToolCall = { tool: string; sessionID: string; input: unknown };
 const nothingAttached = { needsImage: false, tokens: 0 };
 const given = (value: unknown) => value !== undefined && value !== null && value !== '';
 
-export function reviewHelperHook(deps: Pick<RelayDeps, 'store' | 'chatModels' | 'decide' | 'owned' | 'readMs'>) {
+export function reviewHelperHook(deps: Pick<RelayDeps, 'store' | 'chatModels' | 'decide' | 'readMs'>) {
   const readMs = deps.readMs ?? 5000;
   /** The record is for the panel; losing it must never fail a helper. */
   const record = async (sessionID: string, fields: Partial<Decision>): Promise<void> => {
@@ -22,9 +22,6 @@ export function reviewHelperHook(deps: Pick<RelayDeps, 'store' | 'chatModels' | 
       const input = event.input as { prompt?: unknown; model?: unknown; sessionID?: unknown } | null;
       // A call that names its model, or that continues an earlier helper, is left to whoever made that choice.
       if (!input || typeof input !== 'object' || typeof input.prompt !== 'string' || !input.prompt.trim() || given(input.model) || given(input.sessionID)) return;
-      const owned = await within(() => deps.owned(event.sessionID), readMs);
-      if (owned === LATE) throw new Error(`did not answer within ${readMs / 1000} seconds`);
-      if (owned) return;
       const read = await within(() => Promise.all([getRelaySettings(deps.store), deps.chatModels()]), readMs);
       if (read === LATE) throw new Error(`did not answer within ${readMs / 1000} seconds`);
       const [settings, models] = read;

@@ -265,6 +265,8 @@ How it works. The probes of 16 Nov (`docs/compatibility.md`) showed each host st
 
 ### Stage 2: the side panel becomes settings, with prices
 
+**Done on 17 Nov 2026.** The owner answered question 4 ("remove hide yes"), so the old pipeline was deleted rather than hidden, and Run, Spend and More went with it. Built: the price beside each chosen model and in each "Add a model" entry, a "Cheapest first" order for those lists, Recent choices (the last 20, asked for again every 5 seconds while the panel is open), and a warning in the panel and the pill when no decider is chosen. Item 1 became that one poll in the panel, not a shared state module. Item 3 lives in `relay-view.ts` (`priceLabel`, `cheapestFirst`). The live check of item 6 is in `docs/compatibility.md`. What follows is the plan as written.
+
 1. A small shared GUI state module with tests (models, settings, recent decisions), created once in the GUI plugin's `setup`, so that every part of the panel reads the same data.
 2. Hide Run, Spend and the old More sections. Add Recent choices.
 3. Pure facts function (new `src/model-facts.ts`, tests red then green): unknown is null, never zero; a catalog 0/0 reads "$0 or not listed", never "free"; the cached price is null unless it is above zero; money is compared with `parseUsd` bigint.
@@ -300,7 +302,7 @@ It shows only what OpenCode itself does not: the mode, how sure the decider was,
 - Giving the decider what is in the files. Only if names and sizes prove too little, and after the owner agrees to send code to the decider's provider.
 - A budget or a spending limit for `/relay`. The owner, 14 Nov: later.
 - Different settings for one project.
-- Deleting the old pipeline.
+- Deleting the old pipeline. (Done on 17 Nov 2026; see Stage 2.)
 - The other two ways to give a check the Review model (the resolve hook and the review helper type). Only if the tool hook fails Gate 1.
 - Enforcing the limit of three checks in code. Only if Gate 1 shows that the instruction is not followed. Stage 0 showed how: Relay refuses the helper's start, and the calling model is told why.
 - An ordinary model as the decider, through the text call. Only if no decision model answers in the real check.
@@ -341,8 +343,8 @@ The names of the new RPC methods and storage keys; how decisions are stored; the
 
 1. Answered on 14 Nov: "i dont want a budget feature please ignore it we see it later". The decider's requests are not reserved, and no budget is built for `/relay` now. The question as it was asked: The repo rule says every model request the plugin itself makes must reserve its cost against the budget first. The decider call is such a request: one for each `/relay`, and one for each helper that starts. Stage 0 added two facts: Relay's spend guard does not see these calls, and a call cannot be stopped once it is made. With a decision model one decision costs well under a cent, and the free one is listed at 0. May `AGENTS.md` say that the decider's request is limited by its size and is not reserved? The other way keeps the rule but is a bigger job: the ledger today only knows pipeline runs, and a reservation is only released by evidence entered by hand (`src/cas-ledger.ts:98`, `src/cas-ledger.ts:106`), so decisions would need new ledger rules, and a budget setting would stay in the panel. Needed before Stage 1. My default is still the size limit, with only decision models allowed as the decider, because their cost is known before the call. After the Desktop check: the free decision model's two answers each reported a cost of 0, 418 input tokens and 38 output tokens.
 2. No longer needed to start. Stage 0 found that your OpenCode offers two decision models (`ollama-cloud/clef:27b` and `opencode/jev-1.13-free`), so no Google AI Studio key is needed. Which one decides is picked in the side panel. Google's model stays an option for later. After the Desktop check: the free one answered.
-3. Will this be released to other people, and when? It decides the index source. Needed before Stage 3.
-4. Should the old pipeline be deleted once the new flow works, or kept hidden? Needed after Stage 2.
+3. Will this be released to other people, and when? It decides the index source. Needed before Stage 3. On 16 Nov the owner made the repository public under the MIT license and asked for a contributor guide, so it is released. The index source's terms are still not confirmed.
+4. Should the old pipeline be deleted once the new flow works, or kept hidden? Needed after Stage 2. Answered on 17 Nov: "remove hide yes". It was deleted.
 5. Where did the endless reviews happen: in Relay's old run, in a subagent skill inside OpenCode, or somewhere else? It decides in which loop the rules must hold. Asked on 13 Nov and not answered yet; the plan does not wait for it. My guess is helper-driven work inside OpenCode, because that is how the owner works. If so, that loop already has stop rules (see Constraints), and the likelier cause is the model that did the checks, which is what the Review model changes. That is a guess too.
 
 ## What changed from the earlier plan of the same day

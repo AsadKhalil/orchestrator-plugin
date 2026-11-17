@@ -45,10 +45,12 @@ To update later: `git pull`, `npm ci`, `npm run build`, then restart OpenCode.
 
 ## Set up (once, in OpenCode Desktop)
 
-1. Open a chat, open the command palette (Ctrl+K) and run **Open Relay**. The Relay panel opens on its **Modes** tab.
-2. Add models to **Plan**, **Execute** and **Review**. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
-3. Choose a **decider**: a decision model. OpenCode lists the ones you can use; `opencode/jev-1.13-free` is free.
+1. Open a chat, open the command palette (Ctrl+K) and run **Open Relay**. The Relay panel opens beside the chat.
+2. Add models to **Plan**, **Execute** and **Review**. Each model shows its price per million tokens, as OpenCode lists it; set **Order the "Add a model" lists** to **Cheapest first** to sort by price. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
+3. Choose a **decider**: a decision model. OpenCode lists the ones you can use; `opencode/jev-1.13-free` is free. Until you choose one, the panel and the pill warn you: without a decider, Relay switches nothing.
 4. Type a sample message in the test box and press **Try** to see what Relay would pick.
+
+**Recent choices** at the bottom of the panel lists the last 20 decisions, for chats and helpers, and updates by itself.
 
 The settings are shared by all your projects. The terminal app has no settings screen, so set them up in Desktop.
 
@@ -62,7 +64,7 @@ The settings are shared by all your projects. The terminal app has no settings s
 | `/relay on` | Every message you send in this chat goes through Relay, without typing `/relay`. |
 | `/relay off` | This chat goes back to normal. |
 
-- In Desktop, the **Relay pill** above the chat box shows whether Relay is on for that chat. Click it to turn Relay on or off there, and to see the last choice.
+- In Desktop, the **Relay pill** above the chat box shows whether Relay is on for that chat. Click it to turn Relay on or off there, and to see the last choice. With no decider chosen it reads **Relay on · no decider**, and its menu opens the Relay panel.
 - OpenCode shows a "Switched to …" line in the chat when Relay changes the model.
 - Plan and Review use OpenCode's `plan` agent, which is meant for reading and planning, not editing. Only Execute uses `build`, which can change files.
 - When the decision model is not sure (under 60%), `/relay` uses Plan. With `/relay on`, the chat stays as it is.
@@ -80,6 +82,7 @@ OpenCode makes every request, with your OpenCode login. Relay never sees your AP
 - **Ran against a real decision model:** 30 made-up messages, twice, with `opencode/jev-1.13-free` from an isolated OpenCode with no login.
 - **Ran in a full OpenCode Desktop setup (Windows, Ollama Cloud models, 16 Nov 2026):** the Modes tab and its Try box; `/relay` placing messages on the Plan, Execute and Review models; the pill and `/relay on` turning the switch on and off; plain messages with the switch on (placed) and off (left alone); a helper that checks work starting on the Review model. This check found and fixed one bug: after a Plan answer, a clear "fix …" request was judged unsure and stayed on Plan.
 - **Not yet run in a full setup:** pictures and attached files, the interactive terminal app, macOS and Linux, and the install steps above followed by a new user.
+- **Removed on 17 Nov 2026:** the older feature pipeline in the side panel (the Run, Spend and More tabs). Anything it saved is left in place and ignored.
 
 Details are in the [compatibility findings](docs/compatibility.md) and the [change log](docs/implementation-progress.md).
 
@@ -90,13 +93,9 @@ Known limits:
 - A file's size is guessed at four bytes per token, so a file close to a model's limit can still be too big for it.
 - Plan and Review rely on OpenCode's `plan` agent not editing. Another plugin can change that: in the live check, with the Plannotator plugin installed, a Plan turn submitted a plan and then edited a file.
 
-## The older pipeline
-
-This repo also holds an earlier, unfinished workflow: plan, implement and review a whole feature from the side panel, with spending limits and draft pull requests. It is not the product. The panel's Run, Spend and More tabs belong to it. It has run end to end once, on OpenCode 2.2.7 with real Ollama Cloud models, and otherwise only against fakes. Its coder can change files and run commands with your account's permissions; it is off until you turn on `coderEnabled`, and you should only do that in a throwaway project. Its design is in [docs/opencode-feature-pilot-design.md](docs/opencode-feature-pilot-design.md) and [docs/opencode-feature-pilot-plan.md](docs/opencode-feature-pilot-plan.md).
-
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The four checks:
+See [CONTRIBUTING.md](CONTRIBUTING.md). The four checks, which GitHub also runs on every push:
 
 ```sh
 npm ci
