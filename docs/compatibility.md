@@ -697,3 +697,5 @@ A Superpowers run ("subagent-driven development", two small tasks) finished: two
 **Cost.** The Claude turns used the owner's `claude-agent` provider, for which OpenCode lists no price. Clef made about 20 decisions, about a cent at $0.24 per million input tokens. Three turns went to deepseek-v4-pro before the picker fix; OpenCode showed $0.02 on that chat.
 
 **Not tested:** the interactive terminal app; a real decider on Linux and macOS (CI uses a mock model and no decider); a helper started without a model by a Claude caller; the Try box with these settings.
+
+**The README's install steps, as a new user would follow them** (Windows, a throwaway profile through `XDG_*` folders, Desktop's bundled CLI 2.3.0): a fresh clone from GitHub, `npm ci` (26 s), `npm run build` (6 s), the clone's folder written with forward slashes in the global `opencode.json`, then OpenCode started. It listed the plugin, and `/relay on` in a new chat turned the switch on. Run after b28c1f1 was pushed. CI then passed for 28c7259 and 65b35c2 on every job: the four checks on Linux and Windows, and the smoke on Linux, macOS and Windows.
