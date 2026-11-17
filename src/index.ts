@@ -39,7 +39,7 @@ export async function createRuntime(context: Plugin.Context) {
 }
 
 export default Plugin.define({
-  id: 'feature-pilot',
+  id: 'relay-opencode',
   async setup(context) {
     const runtime = await createRuntime(context);
     return () => runtime.dispose();

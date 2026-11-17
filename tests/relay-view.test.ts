@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pickerModel, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
+import { cheapestFirst, checksLine, contextLabel, decisionLine, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
 import { buildDecisionRequest, MAX_CHARS, MAX_FILE_NAMES } from '../src/decider.js';
 
 const chat = { kind: 'chat' as const, mode: 'execute' as const, model: 'p/exec#high' as string | null, confidence: 0.98 as number | null, fit: null as number | null, ms: 150, note: null as string | null };
@@ -95,4 +95,44 @@ test("the model to put in Desktop's picker after Relay switched a chat, and none
   assert.equal(pickerModel({ ...chat, kind: 'helper' }), null, "a helper's model is not the chat's");
   assert.equal(pickerModel({ ...chat, model: null }), null, 'nothing was switched');
   for (const odd of ['noslash', '/m', 'p/', 'p/#high', 'p/m#']) assert.equal(pickerModel({ ...chat, model: odd }), null, odd);
+});
+
+test('a context window reads the way people say it, and one that is not listed says so', () => {
+  assert.deepEqual([0, -1, Number.NaN, 512, 8192, 32768, 131072, 200000, 999_499, 999_500, 1_000_000, 1_048_576, 1_500_000, 2_000_000].map(contextLabel),
+    ['not listed', 'not listed', 'not listed', '512', '8K', '33K', '131K', '200K', '999K', '1M', '1M', '1M', '1.5M', '2M']);
+});
+
+test('a price in the model table is short, and still never called free', () => {
+  assert.equal(priceCell({ inputPerMillion: '3', outputPerMillion: '15', tiered: false }), '$3 / $15');
+  assert.equal(priceCell({ inputPerMillion: '0', outputPerMillion: '0', tiered: false }), '$0 or not listed');
+  assert.equal(priceCell({ inputPerMillion: null, outputPerMillion: null, tiered: false }), 'not listed');
+  assert.equal(priceCell({ inputPerMillion: '1', outputPerMillion: null, tiered: true }), '$1 / not listed (base tier)');
+});
+
+test('the model table keeps the models that have every word typed in their name, id or provider, of one provider if chosen, in the order chosen', () => {
+  const model = (providerID: string, id: string, name: string, input: string | null, context: number) => ({ providerID, id, name, cost: { inputPerMillion: input, outputPerMillion: input, cacheReadPerMillion: null, tiered: false }, limit: { context, output: 0 } });
+  const models = [model('zeta', 'glm-5.3', 'GLM-5.3', '1.4', 200000), model('acme', 'acme-large', 'Acme Large', '3', 200000), model('acme', 'acme-mini', 'Acme Mini', '0.25', 128000), model('local', 'llama', 'Llama Local', null, 0), model('acme', 'acme-huge', 'Acme Huge', '15', 1000000)];
+  const names = (query: string, provider: string, order: 'provider' | 'price' | 'context') => modelRows(models, { query, provider, order }).map(row => row.name);
+  assert.deepEqual(names('', '', 'provider'), ['Acme Huge', 'Acme Large', 'Acme Mini', 'Llama Local', 'GLM-5.3'], 'by provider, then by name');
+  assert.deepEqual(names('  ACME   l ', '', 'provider'), ['Acme Large'], 'every word, in any case, with extra spaces ignored');
+  assert.deepEqual(names('5.3', '', 'provider'), ['GLM-5.3']);
+  assert.deepEqual(names('zeta', '', 'provider'), ['GLM-5.3'], 'the provider counts as a word of the model');
+  assert.deepEqual(modelRows([model('p', 'm1', 'Mega Model', '1', 1000)], { query: 'mega', provider: '', order: 'provider' }).map(row => row.name), ['Mega Model'], 'a word found only in the name, in another case');
+  assert.deepEqual(names('', 'acme', 'price'), ['Acme Mini', 'Acme Large', 'Acme Huge']);
+  assert.deepEqual(names('', '', 'price'), ['Acme Mini', 'GLM-5.3', 'Acme Large', 'Acme Huge', 'Llama Local'], 'cheapest first, a price not listed last');
+  assert.deepEqual(names('', '', 'context'), ['Acme Huge', 'Acme Large', 'GLM-5.3', 'Acme Mini', 'Llama Local'], 'largest context first, a context not listed last');
+  assert.deepEqual(names('nothing like it', '', 'provider'), []);
+  assert.equal(models[0]!.name, 'GLM-5.3', 'the list it was given is left as it was');
+});
+
+test('Add puts in the default effort first, then each effort not in the list yet, and nothing once every effort is in', () => {
+  const model = { providerID: 'acme', id: 'acme-large', variants: ['low', 'high'] };
+  const pick = (variant: string | null) => ({ providerID: 'acme', id: 'acme-large', variant });
+  assert.equal(nextEffort([], model), null);
+  assert.equal(nextEffort([pick(null)], model), 'low');
+  assert.equal(nextEffort([pick(null), pick('low')], model), 'high');
+  assert.equal(nextEffort([pick('low')], model), null);
+  assert.equal(nextEffort([pick(null), pick('low'), pick('high')], model), undefined);
+  assert.equal(nextEffort([{ providerID: 'other', id: 'acme-large', variant: null }], model), null, 'the same id from another provider is another model');
+  assert.equal(nextEffort([pick(null)], { ...model, variants: [] }), undefined);
 });

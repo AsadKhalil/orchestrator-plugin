@@ -1,5 +1,5 @@
-import { FeaturePilot } from './contract.js';
-export { FeaturePilot } from './contract.js';
+import { RelayRpc } from './contract.js';
+export { RelayRpc } from './contract.js';
 import type { Plugin } from '@opencode/plugin';
 import { listProjectModels } from './inventory.js';
 import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, chatSwitch, setChatSwitch, type RelaySettings, type RelayStore } from './relay-store.js';
@@ -12,7 +12,7 @@ const chatID = (input: unknown) => { const id = (input as { sessionID: string })
 export function registerRpc(context: Pick<Plugin.Context, 'rpc' | 'location' | 'model' | 'storage' | 'experimental'>) {
   const relayStore = context.storage as unknown as RelayStore;
   const relayView = async (settings: RelaySettings, chat: Awaited<ReturnType<typeof listProjectModels>>, deciders: Awaited<ReturnType<typeof listProjectModels>>) => ({ directory: context.location.directory, settings, decisions: await recentDecisions(relayStore), deciders, checks: checksStatus(settings, chat) });
-  return context.rpc.register(FeaturePilot, guarded({
+  return context.rpc.register(RelayRpc, guarded({
     listModels: async () => ({ directory: context.location.directory, models: await listProjectModels(context) }),
     getRelay: async () => {
       const [settings, chat, deciders] = await Promise.all([getRelaySettings(relayStore), listProjectModels(context), listProjectModels(context, 'decision')]);

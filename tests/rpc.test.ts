@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { registerRpc, FeaturePilot } from '../src/rpc.js';
+import { registerRpc, RelayRpc } from '../src/rpc.js';
 import { recordDecision } from '../src/relay-store.js';
 
 /** What the real host does with a handler: it supplies the typed-error factory, and the client sees a returned error as a rejected call (a thrown one only as "RPC call failed"). */
@@ -43,7 +43,7 @@ test('registers a read-only inventory endpoint that does not return provider sec
   assert.equal((result as any).directory, '/repo');
   assert.equal((result as any).models[0].id, 'm');
   assert.deepEqual((result as any).models[0].cost, { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, tiered: false });
-  assert.deepEqual(fits(FeaturePilot.methods.listModels.output, result), [], 'the real host refuses an output its contract does not declare');
+  assert.deepEqual(fits(RelayRpc.methods.listModels.output, result), [], 'the real host refuses an output its contract does not declare');
 });
 
 
@@ -53,7 +53,7 @@ test('a refusal reaches the client as the declared rejected error with its messa
   await assert.rejects(handlers.setRelayChat({ sessionID: '  ', on: true }), { type: 'rejected', message: 'Name the chat' });
   await assert.rejects(handlers.testDecider({ text: ' ' }), { type: 'rejected', message: 'Type a sample message' });
   // Every method must declare the error, or the real host would drop the message and the panel could not explain a refusal.
-  const missing = Object.entries(FeaturePilot.methods).filter(([, method]) => !(method as { errors?: Record<string, unknown> }).errors?.rejected).map(([name]) => name);
+  const missing = Object.entries(RelayRpc.methods).filter(([, method]) => !(method as { errors?: Record<string, unknown> }).errors?.rejected).map(([name]) => name);
   assert.deepEqual(missing, []);
 });
 
@@ -83,7 +83,7 @@ function relayHost() {
 test('getRelay and saveRelay keep one set of settings for every project, and fit what they declare', async () => {
   const host = relayHost(), one = await host.connect('/one'), two = await host.connect('/two');
   const input = { revision: 0, modes: { ...noModes, review: [{ ...relayHigh, useFor: ' checks  for mistakes ' }, relayDeep] }, decider: relayJudge };
-  assert.deepEqual(fits(FeaturePilot.methods.saveRelay.input, input), [], 'what the panel sends fits the declared input');
+  assert.deepEqual(fits(RelayRpc.methods.saveRelay.input, input), [], 'what the panel sends fits the declared input');
   const saved = await one.saveRelay(input);
   assert.equal(saved.settings.revision, 1);
   assert.deepEqual(saved.settings.modes.review, [{ ...relayHigh, useFor: 'checks for mistakes' }, { ...relayDeep, useFor: '' }]);
@@ -94,7 +94,7 @@ test('getRelay and saveRelay keep one set of settings for every project, and fit
   assert.deepEqual(seen.deciders.map((model: { providerID: string; id: string; cost: { inputPerMillion: string } }) => `${model.providerID}/${model.id} ${model.cost.inputPerMillion}`), ['d/judge 0.24']);
   assert.deepEqual([seen.checks, seen.decisions.length, seen.decisions[0].model], [{ active: true, note: null }, 1, 'p/m#high']);
   assert.equal(JSON.stringify(seen).includes('secret'), false);
-  assert.deepEqual([fits(FeaturePilot.methods.getRelay.output, seen), fits(FeaturePilot.methods.saveRelay.output, saved)], [[], []]);
+  assert.deepEqual([fits(RelayRpc.methods.getRelay.output, seen), fits(RelayRpc.methods.saveRelay.output, saved)], [[], []]);
   await assert.rejects(one.saveRelay({ revision: 0, modes: noModes, decider: null }), { type: 'rejected', message: /stale/i });
   await assert.rejects(one.saveRelay({ revision: 1, modes: noModes, decider: relayHigh }), { type: 'rejected', message: /decision model/i });
   await assert.rejects(one.saveRelay({ revision: 1, modes: { ...noModes, plan: [{ ...relayHigh, useFor: 'x'.repeat(201) }] }, decider: relayJudge }), { type: 'rejected', message: /at most 200 characters/ });
@@ -107,14 +107,14 @@ test("getRelayChat and setRelayChat read and turn one chat's switch, give that c
   const off = await one.getRelayChat({ sessionID: 'ses-1' });
   assert.deepEqual(off, { on: false, last: null, decider: false });
   const input = { sessionID: 'ses-1', on: true };
-  assert.deepEqual(fits(FeaturePilot.methods.setRelayChat.input, input), [], 'what the pill sends fits the declared input');
+  assert.deepEqual(fits(RelayRpc.methods.setRelayChat.input, input), [], 'what the pill sends fits the declared input');
   const set = await one.setRelayChat(input);
   assert.deepEqual(set, { on: true });
   await recordDecision(host.storage, { at: '2026-11-16T00:00:01.000Z', sessionID: 'ses-1', kind: 'chat', mode: 'review', confidence: 0.9, fit: null, model: 'p/m#high', ms: 150, costUsd: '0', note: null });
   await recordDecision(host.storage, { at: '2026-11-16T00:00:02.000Z', sessionID: 'ses-2', kind: 'chat', mode: 'plan', confidence: 0.9, fit: null, model: 'p/deep', ms: 150, costUsd: '0', note: null });
   const seen = await (await host.connect('/two')).getRelayChat({ sessionID: 'ses-1' });
   assert.deepEqual([seen.on, seen.last?.sessionID, seen.last?.model], [true, 'ses-1', 'p/m#high'], "this chat's newest record, read from any project folder");
-  assert.deepEqual([fits(FeaturePilot.methods.getRelayChat.output, seen), fits(FeaturePilot.methods.getRelayChat.output, off), fits(FeaturePilot.methods.setRelayChat.output, set)], [[], [], []]);
+  assert.deepEqual([fits(RelayRpc.methods.getRelayChat.output, seen), fits(RelayRpc.methods.getRelayChat.output, off), fits(RelayRpc.methods.setRelayChat.output, set)], [[], [], []]);
   assert.deepEqual(await one.setRelayChat({ sessionID: 'ses-1', on: false }), { on: false });
   assert.equal((await one.getRelayChat({ sessionID: 'ses-1' })).on, false);
   await assert.rejects(one.setRelayChat({ sessionID: '  ', on: true }), { type: 'rejected', message: /chat/i });
@@ -129,7 +129,7 @@ test('getRelayDecisions gives the newest 20 records, newest first, from storage 
   assert.deepEqual(result.decisions.map((item: { sessionID: string }) => item.sessionID), Array.from({ length: 20 }, (_, i) => `ses-${22 - i}`));
   assert.equal(result.directory, '/one');
   assert.equal(host.lists(), before, 'no model list is read: the panel asks for this every few seconds');
-  assert.deepEqual(fits(FeaturePilot.methods.getRelayDecisions.output, result), []);
+  assert.deepEqual(fits(RelayRpc.methods.getRelayDecisions.output, result), []);
 });
 
 test('testDecider asks the chosen decider once and reports what Relay would do', async () => {
@@ -138,7 +138,7 @@ test('testDecider asks the chosen decider once and reports what Relay would do',
   host.answer({ answers: [picked('mode', 'review', 0.97), picked('review_line', '1', 0.8)], cost: 0 });
   const sure = await one.testDecider({ text: 'check my diff' });
   assert.deepEqual({ ...sure, ms: 0 }, { directory: '/one', mode: 'review', confidence: 0.97, model: 'p/m#high', fit: 0.8, ms: 0, costUsd: '0', note: null });
-  assert.deepEqual(fits(FeaturePilot.methods.testDecider.output, sure), []);
+  assert.deepEqual(fits(RelayRpc.methods.testDecider.output, sure), []);
   assert.equal(host.requests.length, 1);
   assert.deepEqual(host.requests[0].model, { providerID: 'd', id: 'judge' });
   assert.deepEqual(host.requests[0].questions.map((question: { name: string }) => question.name), ['mode', 'review_line']);
@@ -149,7 +149,7 @@ test('testDecider asks the chosen decider once and reports what Relay would do',
   host.answer({ answers: [] });
   const silent = await one.testDecider({ text: 'hello' });
   assert.deepEqual({ ...silent, ms: 0 }, { directory: '/one', mode: null, confidence: null, model: null, fit: null, ms: 0, costUsd: null, note: "the decider's answer could not be read" });
-  assert.deepEqual([fits(FeaturePilot.methods.testDecider.output, unsure), fits(FeaturePilot.methods.testDecider.output, silent)], [[], []]);
+  assert.deepEqual([fits(RelayRpc.methods.testDecider.output, unsure), fits(RelayRpc.methods.testDecider.output, silent)], [[], []]);
   await assert.rejects(one.testDecider({ text: '  ' }), { type: 'rejected', message: /sample message/i });
   assert.equal(host.requests.length, 3);
   assert.deepEqual((await one.getRelay({})).decisions, [], 'a try in the test box is not recorded');

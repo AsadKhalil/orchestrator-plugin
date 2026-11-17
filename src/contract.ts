@@ -32,8 +32,8 @@ const relayOutput = { type: 'object', properties: {
 const errors = { rejected: { type: 'object', properties: {}, additionalProperties: false } } as const;
 const nothing = { type: 'object', properties: {}, additionalProperties: false } as const;
 
-export const FeaturePilot = Rpc.define({
-  id: 'feature-pilot',
+export const RelayRpc = Rpc.define({
+  id: 'relay-opencode',
   events: {},
   methods: {
     getRelay: { errors, input: nothing, output: relayOutput },

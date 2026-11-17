@@ -1,14 +1,14 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from 'solid-js';
 import { Command, ComposerPill, Panel, Plugin, type MountedSession, type PanelTab } from '@opencode/plugin/gui';
-import { FeaturePilot } from './contract.js';
+import { RelayRpc } from './contract.js';
 import { offered, type ModelChoice } from './settings.js';
-import type { ModelCostView } from './inventory.js';
+import type { ListedModel } from './inventory.js';
 import { USE_FOR_MAX, type Decision, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
 import { describeError, modeLabel, reviewRules } from './router.js';
-import { cheapestFirst, checksLine, decisionLine, noDeciderNote, pickerModel, pillView, priceLabel, privacyNote, recentLine, switchHint, tryLine } from './relay-view.js';
+import { checksLine, contextLabel, decisionLine, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine, type TableOrder } from './relay-view.js';
 import { panelCss } from './gui-styles.js';
 
-type Model = { providerID: string; id: string; name: string; enabled: boolean; status: string; variants: string[]; capabilities: { input: string[]; tools: boolean }; cost: ModelCostView };
+type Model = ListedModel;
 const modeCards = [['plan', 'Thinks, explains and plans. Cannot change files.'], ['execute', 'Writes, changes, fixes and runs. Can change files.'], ['review', 'Checks existing work and reports. Cannot change files. Helpers that check work use these models too.']] as const;
 type RelayView = { directory: string; settings: RelaySettings; decisions: Decision[]; deciders: Model[]; checks: { active: boolean; note: string | null } };
 // The body is built the first time the section is opened, so closed sections cost nothing.
@@ -22,7 +22,6 @@ const Acc = (props: { title: string; sub?: string; children: JSX.Element }) => {
 
 export default Plugin.define({
   setup(ctx) {
-    // The panel keeps the id `models` it had when it also held the older pipeline's tabs, so a layout that saved it still opens it.
     const tab: PanelTab = { id: 'models', title: 'Relay', closable: 'compact', fallback: true };
     ctx.add(Command, () => ({
       id: 'open', title: 'Open Relay', keywords: 'relay models modes plan execute review decider',
@@ -34,7 +33,7 @@ export default Plugin.define({
       list: input => input.open.includes('models') ? [tab] : [],
       render: props => {
         type Session = typeof props.session;
-        const api = (session: Session) => ({ rpc: session.server.client.rpc(FeaturePilot), options: { location: { directory: session.directory } } });
+        const api = (session: Session) => ({ rpc: session.server.client.rpc(RelayRpc), options: { location: { directory: session.directory } } });
         const call = async <T extends object>(session: Session, run: (client: ReturnType<typeof api>) => Promise<unknown>) => {
           const value = await run(api(session)) as T & { directory: string };
           if (value.directory !== session.directory) throw new Error('Wrong project');
@@ -62,7 +61,11 @@ export default Plugin.define({
         const poll = setInterval(() => void loadRecent(), 5000); onCleanup(() => clearInterval(poll));
         const decisions = createMemo(() => recent()?.session === props.session ? recent()!.decisions : data()?.relay.decisions ?? []);
         const when = (at: string) => new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const [order, setOrder] = createSignal<'provider' | 'price'>('provider');
+        // The "Add a model" table: one mode's at a time, with a search box, a provider filter and an order.
+        const [adding, setAdding] = createSignal<Mode | null>(null);
+        const [query, setQuery] = createSignal('');
+        const [provider, setProvider] = createSignal('');
+        const [order, setOrder] = createSignal<TableOrder>('provider');
         const same = (a: ModelChoice, b: ModelChoice) => a.providerID === b.providerID && a.id === b.id && a.variant === b.variant;
         const keyOf = (choice: ModelChoice) => JSON.stringify([choice.providerID, choice.id, choice.variant]);
         const chosen = (mode: Mode): ModeChoice[] => data()?.relay.settings.modes[mode] ?? [];
@@ -103,12 +106,14 @@ export default Plugin.define({
           return saved && !list.some(item => item.key === keyOf(saved)) ? [...list, { key: keyOf(saved), choice: saved, label: `${saved.id} · not offered now` }] : list;
         });
         const deciderKey = () => { const saved = data()?.relay.settings.decider; return saved ? keyOf(saved) : ''; };
-        const addableGroups = (mode: Mode) => {
-          const items = (result() ?? []).filter(model => model.enabled && model.status !== 'deprecated').flatMap(model => [null, ...model.variants].map(variant => ({ model, variant, choice: { providerID: model.providerID, id: model.id, variant } as ModelChoice }))).filter(item => !chosen(mode).some(choice => same(choice, item.choice)));
-          if (order() === 'price') return [['Cheapest first', [...items].sort((a, b) => cheapestFirst(a.model, b.model))] as const];
-          return [...new Set(items.map(item => item.model.providerID))].map(provider => [provider, items.filter(item => item.model.providerID === provider)] as const);
-        };
-        const addModel = (mode: Mode, key: string) => { const found = addableGroups(mode).flatMap(([, items]) => items).find(item => keyOf(item.choice) === key); if (found) setList(mode, [...chosen(mode), { ...found.choice, useFor: '' }]); };
+        const usable = createMemo(() => (result() ?? []).filter(model => model.enabled && model.status !== 'deprecated'));
+        const providers = createMemo(() => [...new Set(usable().map(model => model.providerID))].sort().map(id => ({ id, count: usable().filter(model => model.providerID === id).length })));
+        const rows = createMemo(() => modelRows(usable(), { query: query(), provider: provider(), order: order() }));
+        const openTable = (mode: Mode) => { setQuery(''); setProvider(''); setAdding(mode); };
+        // A model goes in with the default effort, or with the first effort not in the list yet; the effort is changed on its row above.
+        const addModel = (mode: Mode, model: Model) => { const variant = nextEffort(chosen(mode), model); if (variant !== undefined) setList(mode, [...chosen(mode), { providerID: model.providerID, id: model.id, variant, useFor: '' }]); };
+        const taken = (mode: Mode, choice: ModeChoice, variant: string | null) => chosen(mode).some(item => same(item, { ...choice, variant }));
+        const setEffort = (mode: Mode, choice: ModeChoice, variant: string | null) => setList(mode, chosen(mode).map(item => same(item, choice) ? { ...item, variant } : item));
 
         return <section class="rl" aria-label="Relay">
           <style>{panelCss}</style>
@@ -122,9 +127,6 @@ export default Plugin.define({
             <p class="rl-hint">Type <strong>/relay</strong> and your message in the chat. Relay picks Plan, Execute or Review for it, switches the chat to a model you chose for that mode, and sends your message. These settings are the same in every project.</p>
             <Show when={!response.error} fallback={<div class="rl-note n-bad" role="alert">Could not load the settings. Check the server connection and try again.</div>}>
               <Show when={data() && data()!.relay.settings.decider === null}><div class="rl-note n-warn" role="status">{noDeciderNote}</div></Show>
-              <label class="rl-inline"><span class="rl-hint">Order the “Add a model” lists</span>
-                <select class="rl-in" style={{ width: 'auto' }} value={order()} onChange={event => setOrder(event.currentTarget.value === 'price' ? 'price' : 'provider')}><option value="provider">By provider</option><option value="price">Cheapest first</option></select>
-              </label>
               <For each={modeCards}>{([mode, blurb]) => <div class="rl-card">
                 <div><strong class="rl-role">{modeLabel(mode)}</strong><span class="rl-hint">{blurb}</span></div>
                 <For each={chosen(mode)}>{choice => <div class="rl-pick">
@@ -133,16 +135,55 @@ export default Plugin.define({
                     <Show when={unavailable(choice)}><small>unavailable</small></Show>
                     <button type="button" class="rl-x" aria-label={`Remove ${choice.providerID} / ${choice.id} / ${choice.variant ?? 'default'} from ${modeLabel(mode)}`} disabled={saving()} onClick={() => setList(mode, chosen(mode).filter(item => !same(item, choice)))}>×</button>
                   </span>
-                  <Show when={result() && offered(result()!, choice)}>{model => <span class="rl-hint">{priceLabel(model().cost)}</span>}</Show>
+                  <Show when={result() && offered(result()!, choice)}>{model => <div class="rl-inline">
+                    <Show when={model().variants.length}>
+                      <select class="rl-in rl-effort" aria-label={`Effort for ${choice.id} in ${modeLabel(mode)}`} disabled={saving()} onChange={event => setEffort(mode, choice, event.currentTarget.value || null)}>
+                        <option value="" selected={choice.variant === null} disabled={choice.variant !== null && taken(mode, choice, null)}>default effort</option>
+                        <For each={model().variants}>{variant => <option value={variant} selected={choice.variant === variant} disabled={choice.variant !== variant && taken(mode, choice, variant)}>{variant} effort</option>}</For>
+                      </select>
+                    </Show>
+                    <span class="rl-hint">{priceLabel(model().cost)}</span>
+                  </div>}</Show>
                   <input class="rl-in" type="text" maxlength={USE_FOR_MAX} aria-label={`What ${choice.id} is for in ${modeLabel(mode)}`} placeholder="Use it for… (your own words, optional)" value={choice.useFor} disabled={saving()}
                     onChange={event => { const useFor = event.currentTarget.value.replace(/\s+/g, ' ').trim(); if (useFor !== choice.useFor) setList(mode, chosen(mode).map(item => same(item, choice) ? { ...item, useFor } : item)); }} />
                 </div>}</For>
                 <Show when={!chosen(mode).length}><span class="rl-hint">None chosen yet. /relay leaves the chat as it is for {modeLabel(mode)}.</span></Show>
                 <Show when={chosen(mode).length > 1}><span class="rl-hint">Several models: the decider picks the one whose line fits your message. When no line fits clearly, the chat keeps its model if it is in this list; otherwise the first is used. With no lines written, the first is always used.</span></Show>
-                <select class="rl-in" aria-label={`Add a model for ${modeLabel(mode)}`} disabled={saving() || response.loading} onChange={event => { const key = event.currentTarget.value; event.currentTarget.value = ''; addModel(mode, key); }}>
-                  <option value="">+ Add a model…</option>
-                  <For each={addableGroups(mode)}>{([provider, items]) => <optgroup label={provider}><For each={items}>{item => <option value={keyOf(item.choice)}>{item.model.name} · {item.variant ?? 'default effort'} · {priceLabel(item.model.cost)}{item.model.capabilities.tools ? '' : ' · no tools'}</option>}</For></optgroup>}</For>
-                </select>
+                <Show when={adding() === mode} fallback={<button type="button" class="rl-btn sm rl-add" disabled={saving() || response.loading} onClick={() => openTable(mode)}>+ Add a model</button>}>
+                  {/* Escape closes the table and stays inside the panel, so the host does not act on it too. */}
+                  <div class="rl-picker" role="group" aria-label={`Add a model to ${modeLabel(mode)}`} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setAdding(null); } }}>
+                    <div class="rl-inline">
+                      <input class="rl-in" type="search" ref={element => setTimeout(() => element.focus())} placeholder="Search, e.g. sonnet or ollama" aria-label="Search models" value={query()} onInput={event => setQuery(event.currentTarget.value)} />
+                      <button type="button" class="rl-btn sm" onClick={() => setAdding(null)}>Done</button>
+                    </div>
+                    <div class="rl-inline">
+                      <select class="rl-in" aria-label="Provider" onChange={event => setProvider(event.currentTarget.value)}>
+                        <option value="" selected={provider() === ''}>All providers ({usable().length})</option>
+                        <For each={providers()}>{item => <option value={item.id} selected={provider() === item.id}>{item.id} ({item.count})</option>}</For>
+                      </select>
+                      <select class="rl-in" aria-label="Order" onChange={event => setOrder(event.currentTarget.value as TableOrder)}>
+                        <option value="provider" selected={order() === 'provider'}>By provider</option>
+                        <option value="price" selected={order() === 'price'}>Cheapest first</option>
+                        <option value="context" selected={order() === 'context'}>Largest context</option>
+                      </select>
+                    </div>
+                    <div class="rl-table-wrap">
+                      <table class="rl-table">
+                        <thead><tr><th scope="col">Model</th><th scope="col">Price per 1M<small>in / out</small></th><th scope="col">Context</th><th scope="col"><span class="rl-sr">Add</span></th></tr></thead>
+                        <tbody><For each={rows()}>{model => {
+                          const inList = () => chosen(mode).some(choice => choice.providerID === model.providerID && choice.id === model.id);
+                          return <tr>
+                            <td><span class="rl-t-name">{model.name}</span><small>{model.providerID}{model.capabilities.tools ? '' : ' · no tools'}{inList() ? ' · ✓ in the list' : ''}</small></td>
+                            <td>{priceCell(model.cost)}</td>
+                            <td>{contextLabel(model.limit.context)}</td>
+                            <td><button type="button" class="rl-btn sm" disabled={saving() || nextEffort(chosen(mode), model) === undefined} title={inList() ? 'Adds it once more, with another effort' : undefined} aria-label={`Add ${model.name} from ${model.providerID} to ${modeLabel(mode)}`} onClick={() => addModel(mode, model)}>Add</button></td>
+                          </tr>;
+                        }}</For></tbody>
+                      </table>
+                    </div>
+                    <span class="rl-hint" aria-live="polite">{rows().length ? `${rows().length} of ${usable().length} models` : 'No model matches. Try fewer words, or All providers.'}</span>
+                  </div>
+                </Show>
               </div>}</For>
               <div class="rl-card">
                 <div><strong class="rl-role">Decider</strong><span class="rl-hint">A small decision model. It picks the mode, and the model inside the mode, for each /relay message.</span></div>
@@ -178,7 +219,7 @@ export default Plugin.define({
     // shortcut: it asks the server again every 5 seconds for the chats shown in the last 15; a server event would do better if OpenCode gives plugins one.
     const [chats, setChats] = createSignal<Record<string, { on: boolean; last: Decision | null; decider: boolean }>>({});
     const seen = new Map<string, { session: MountedSession; at: number }>();
-    const relayOf = (session: MountedSession) => ({ rpc: session.server.client.rpc(FeaturePilot), options: { location: { directory: session.directory } } });
+    const relayOf = (session: MountedSession) => ({ rpc: session.server.client.rpc(RelayRpc), options: { location: { directory: session.directory } } });
     // Desktop sends its model picker's choice with every message (2.3.0, 17 Nov), so after Relay switches a chat the picker must follow, or
     // the next message goes back to the old model. Only a switch made while the pill watches the chat is followed, once, and only while that
     // chat is on screen, so a model the person picks afterwards stands.

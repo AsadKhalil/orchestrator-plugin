@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import plugin from '../src/index.js';
 
 /** A host that keeps what the plugin adds as commands. The host runs the callback again whenever it rebuilds its commands, so the fake runs it twice. */
@@ -70,4 +71,11 @@ test('/relay as registered sends the message once, marked as placed, and records
   await host.added[0].execute({ sessionID: 'ses-b', prompt: { text: 'hi' }, delivery: 'queue' });
   assert.deepEqual(host.prompts, [{ text: 'hi', sessionID: 'ses-b', delivery: 'queue', metadata: { relay: 'sent' } }]);
   assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.kind, item.sessionID, item.mode, item.note]), [['chat', 'ses-b', null, 'no decider chosen']]);
+});
+
+test('the plugin id, the RPC id and the package name are one name: relay-opencode', async () => {
+  // OpenCode keeps each plugin's saved settings under its id, so a new name loses everyone's settings (the rename from feature-pilot did, 17 Nov 2026).
+  const { RelayRpc } = await import('../src/contract.js');
+  const { name } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { name: string };
+  assert.deepEqual([plugin.id, RelayRpc.id, name], ['relay-opencode', 'relay-opencode', 'relay-opencode']);
 });

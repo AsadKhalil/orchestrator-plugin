@@ -2,7 +2,7 @@
 // THIS MAKES REAL REQUESTS: one for each example (at most 30), to the model in RELAY_EXAMPLES_MODEL (default opencode/jev-1.13-free),
 // from an isolated OpenCode with scratch config, data, cache and state folders, a throwaway password, no login and no plugin.
 // Run it only with the owner's yes. It refuses a model whose listed price is not 0 unless RELAY_EXAMPLES_PAID=1, and it stops
-// when the model does not answer. Needs FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary.
+// when the model does not answer. Needs RELAY_SMOKE_CLI pointing at an `opencode` 2.3.0 binary.
 // RELAY_EXAMPLES_OUT=<file> keeps the outcomes. RELAY_EXAMPLES_FROM=<file> prints the report for kept outcomes again, with no request,
 // so a corrected label can be scored without asking the model again. RELAY_EXAMPLES_SET=<file> uses another labelled set
 // (your own lines, or the same examples in another order) instead of scripts/relay-examples.json.
@@ -138,7 +138,7 @@ async function main() {
   const set =JSON.parse(readFileSync(process.env.RELAY_EXAMPLES_SET ?? new URL('./relay-examples.json', import.meta.url), 'utf8')) as ExampleSet;
   if (process.env.RELAY_EXAMPLES_FROM) { console.log(examplesReport(scoreExamples(set, JSON.parse(readFileSync(process.env.RELAY_EXAMPLES_FROM, 'utf8')) as Outcome[]))); return; }
 
-  const cli = process.env.FEATURE_PILOT_SMOKE_CLI ?? 'opencode', password = 'synthetic-local-examples';
+  const cli = process.env.RELAY_SMOKE_CLI ?? 'opencode', password = 'synthetic-local-examples';
   const [providerID, ...idParts] = (process.env.RELAY_EXAMPLES_MODEL ?? 'opencode/jev-1.13-free').split('/'), id = idParts.join('/');
   const root = await mkdtemp(join(tmpdir(), 'relay-examples-')), project = join(root, 'project');
   // Every run of the host binary gets the scratch folders and no credential, so nothing is read from or written to a real profile.

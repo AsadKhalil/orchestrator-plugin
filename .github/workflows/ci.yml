@@ -52,5 +52,5 @@ jobs:
           bin="$RUNNER_TEMP/opencode/node_modules/$name/bin/opencode"
           if [ "$platform" = windows ]; then bin="$bin.exe"; fi
           "$bin" --version
-          echo "FEATURE_PILOT_SMOKE_CLI=$bin" >> "$GITHUB_ENV"
+          echo "RELAY_SMOKE_CLI=$bin" >> "$GITHUB_ENV"
       - run: npm run smoke:host:model

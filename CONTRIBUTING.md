@@ -1,6 +1,6 @@
 # Contributing to Relay
 
-Thanks for helping. Relay is an OpenCode plugin (package `feature-pilot`). `/relay <message>` asks a small decision model whether a message is plan, execute or review work, picks the model you chose for that kind of work, and sends the message there. The [README](README.md) says what it does and how to install it.
+Thanks for helping. Relay is an OpenCode plugin (package `relay-opencode`). `/relay <message>` asks a small decision model whether a message is plan, execute or review work, picks the model you chose for that kind of work, and sends the message there. The [README](README.md) says what it does and how to install it.
 
 ## Set up
 
@@ -26,13 +26,13 @@ Thanks for helping. Relay is an OpenCode plugin (package `feature-pilot`). `/rel
 
 - **Write the test first.** Watch it fail, then make it pass. For a new guard, break it once and check that its test turns red.
 - **Keep the fakes honest.** A fake host in a test should behave like the real one. If you find a difference, fix the fake and say so.
-- **Never use real keys or your own OpenCode profile in tests.** The smoke (`npm run smoke:host:model`) installs the packed plugin into an isolated OpenCode with scratch folders, a throwaway password and a mock model. It needs `npm run build` first, and `FEATURE_PILOT_SMOKE_CLI` set to an OpenCode 2.3.0 binary. To get one without installing OpenCode, run `npm install --prefix <folder> --ignore-scripts @opencode/cli-<os>-<arch>@2.3.0` (for example `cli-linux-x64`, `cli-darwin-arm64` or `cli-windows-x64`); the binary is in `<folder>/node_modules/@opencode/cli-<os>-<arch>/bin/`.
+- **Never use real keys or your own OpenCode profile in tests.** The smoke (`npm run smoke:host:model`) installs the packed plugin into an isolated OpenCode with scratch folders, a throwaway password and a mock model. It needs `npm run build` first, and `RELAY_SMOKE_CLI` set to an OpenCode 2.3.0 binary. To get one without installing OpenCode, run `npm install --prefix <folder> --ignore-scripts @opencode/cli-<os>-<arch>@2.3.0` (for example `cli-linux-x64`, `cli-darwin-arm64` or `cli-windows-x64`); the binary is in `<folder>/node_modules/@opencode/cli-<os>-<arch>/bin/`.
 - **Don't call something verified when it only ran against fakes.** If you try a change on a real OpenCode, add what you saw to `docs/compatibility.md` (platform, OpenCode version, and what you did not test), and one dated line to `docs/implementation-progress.md`.
 - **Rules the code relies on:**
   - Every RPC method in `src/contract.ts` declares its errors. A test checks this.
   - Money is a USD string backed by `bigint` (`src/costs.ts`), never a float.
   - The panel imports `router.ts`, `decider.ts`, `relay-store.ts`, `relay-view.ts` and `costs.ts`, so they, and what they import, must not import anything from `node:`.
-  - Internal ids keep the old name `feature-pilot` on purpose. Renaming them would orphan people's saved settings.
+  - The package name, the plugin id and the RPC id are all `relay-opencode`, and a test keeps them equal. OpenCode keeps each plugin's saved settings under its id, so a new id loses everyone's settings.
   - Mark a deliberate simplification with a `// shortcut:` comment that says where it stops working.
   - Keep each file's existing line endings.
 - `AGENTS.md` lists the same rules for coding agents, and more detail on each.
@@ -47,7 +47,7 @@ Thanks for helping. Relay is an OpenCode plugin (package `feature-pilot`). `/rel
 
 1. Raise `version` in `package.json` and add a dated line to `docs/implementation-progress.md`.
 2. Run `npm login`, then `npm publish`. `prepublishOnly` runs the four checks first and stops the release if one fails.
-3. People can then install with one line: `"plugins": ["feature-pilot"]` in their global `opencode.json`. OpenCode installs the package from npm by itself.
+3. People can then install with one line: `"plugins": ["relay-opencode"]` in their global `opencode.json`. OpenCode installs the package from npm by itself.
 
 ## Reporting a problem
 

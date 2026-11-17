@@ -1,6 +1,6 @@
 // Real-host smoke: the packed plugin, installed the way npm installs a package, in an isolated OpenCode 2.3.0 server that talks to a FREE
 // loopback mock provider. No credential, paid provider or real profile is involved; the only key is a synthetic string the mock checks.
-// Needs `npm run build` and FEATURE_PILOT_SMOKE_CLI pointing at an `opencode` 2.3.0 binary (default: `opencode` on the PATH).
+// Needs `npm run build` and RELAY_SMOKE_CLI pointing at an `opencode` 2.3.0 binary (default: `opencode` on the PATH).
 // It checks that the plugin loads and lists models; sends one `/relay` message in a normal chat with no decider chosen (no switch, one request,
 // one record); turns that chat's switch on with `/relay on`, keeps it across a server restart, and checks what the `prompt` hook records; then
 // turns it off with `/relay off`. It does NOT exercise a real switch (that needs a decision model), a helper, or the Desktop panel.
@@ -19,10 +19,10 @@ import { OpenCode } from '@opencode/client/promise';
 
 const execFile = promisify(execFileCallback);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const cli = process.env.FEATURE_PILOT_SMOKE_CLI ?? 'opencode';
+const cli = process.env.RELAY_SMOKE_CLI ?? 'opencode';
 const password = 'synthetic-local-smoke', apiKey = 'synthetic-key-not-real';
 if (!existsSync(join(repo, 'dist', 'index.js'))) throw new Error('Run `npm run build` first');
-const root = await mkdtemp(join(tmpdir(), 'feature-pilot-model-')), project = join(root, 'project');
+const root = await mkdtemp(join(tmpdir(), 'relay-model-')), project = join(root, 'project');
 const baseEnv = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'USER', 'SHELL', 'SystemRoot', 'COMSPEC', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
 Object.assign(baseEnv, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null' });
 const sleep = ms => new Promise(done => setTimeout(done, ms));
@@ -63,7 +63,7 @@ async function start() {
   child.stdout.on('data', chunk => { instance.log += chunk.toString(); }); child.stderr.on('data', chunk => { instance.log += chunk.toString(); });
   const client = OpenCode.make({ baseUrl: `http://127.0.0.1:${port}`, headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` } });
   const deadline = Date.now() + 120_000; let plugins;
-  const loaded = () => (plugins?.data ?? []).some(item => JSON.stringify(item).includes('feature-pilot'));
+  const loaded = () => (plugins?.data ?? []).some(item => JSON.stringify(item).includes('relay-opencode'));
   while (Date.now() < deadline && !loaded()) {
     if (child.exitCode !== null) throw new Error(`OpenCode exited: ${instance.log.slice(-1500)}`);
     try { plugins = await client.plugin.list({ location: { directory: project } }, { signal: AbortSignal.timeout(2000) }); } catch { /* not ready */ }
@@ -87,15 +87,15 @@ try {
   await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'smoke-project', private: true }));
   await npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', join(root, pack.filename)], project);
   await writeFile(join(project, 'opencode.json'), JSON.stringify({
-    plugins: ['./node_modules/feature-pilot'],
+    plugins: ['./node_modules/relay-opencode'],
     // A normal chat carries the host's whole system text and tools, so the model needs room or the host compacts before the first turn.
     providers: { smoke: { name: 'Smoke', package: '@ai-sdk/openai-compatible', env: ['SMOKE_API_KEY'], settings: { baseURL: `http://127.0.0.1:${mockPort}/v1` },
       models: { 'model-chat': { name: 'Model Chat', limit: { context: 200000, output: 1000 } } } } },
   }));
-  const { FeaturePilot } = await import(pathToFileURL(join(project, 'node_modules', 'feature-pilot', 'dist', 'rpc.js')).href);
+  const { RelayRpc } = await import(pathToFileURL(join(project, 'node_modules', 'relay-opencode', 'dist', 'rpc.js')).href);
   server = await start();
   const options = { location: { directory: project } };
-  const rpc = () => server.client.rpc(FeaturePilot);
+  const rpc = () => server.client.rpc(RelayRpc);
 
   // The mock model must show up, enabled, before a chat can use it.
   let found; const seen = Date.now() + 60_000;

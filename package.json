@@ -1,5 +1,5 @@
 {
-  "name": "feature-pilot",
+  "name": "relay-opencode",
   "version": "0.1.0",
   "description": "Relay for OpenCode: picks the model for each message (plan, execute or review), switches the chat to it, and sends the message.",
   "license": "MIT",

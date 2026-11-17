@@ -699,3 +699,30 @@ A Superpowers run ("subagent-driven development", two small tasks) finished: two
 **Not tested:** the interactive terminal app; a real decider on Linux and macOS (CI uses a mock model and no decider); a helper started without a model by a Claude caller; the Try box with these settings.
 
 **The README's install steps, as a new user would follow them** (Windows, a throwaway profile through `XDG_*` folders, Desktop's bundled CLI 2.3.0): a fresh clone from GitHub, `npm ci` (26 s), `npm run build` (6 s), the clone's folder written with forward slashes in the global `opencode.json`, then OpenCode started. It listed the plugin, and `/relay on` in a new chat turned the switch on. Run after b28c1f1 was pushed. CI then passed for 28c7259 and 65b35c2 on every job: the four checks on Linux and Windows, and the smoke on Linux, macOS and Windows.
+
+## 2026-11-17 — Rename to relay-opencode, and the model table (Windows 11, OpenCode 2.3.0)
+
+The owner said: "please rename i dont want feature-pilot name. 2: the model list is quite long can we make 2 list select provider than their models or model list like table model name, price, and context with search?"
+
+**The rename.** The package, the plugin id and the RPC id are now `relay-opencode` (`opencode-relay` is taken on npm; `relay-opencode` was free on 17 Nov). The smoke ran locally with Desktop's bundled CLI 2.3.0 and passed: the packed `relay-opencode` loaded from `node_modules`, `/relay` with no decider sent one message to the mock model and recorded it, and `/relay on` and `/relay off` behaved as before.
+
+**The owner's Desktop after the rename.** The owner's OpenCode loads this repository's `dist/`. The first build with the new id was at about 07:43 local time, and the owner's service reloaded its plugins then. At 07:45:18 OpenCode's terminal client reported "Event stream stalled", and the replacement service failed to boot at 07:45:25 with `Failed to configure database (… SQLiteError: disk I/O error)`. It kept port 28894 and answered `/api/info` with 500. Desktop logged "Background service failed to start" every one to two seconds: the same state as on 16 Nov. With the owner's yes, that one process was ended at 08:02. A fresh service answered `/api/info` with 200 about two minutes later and loaded Relay with no error, and the owner's Desktop was already calling Relay under its new id. By 08:13 the service had been replaced four more times after "Event stream stalled" reports from OpenCode's terminal client, the churn seen since 10 Nov. Settings saved under the old id do not carry over. The owner chose to set their models again rather than have them copied.
+
+**The model table.** Checked in a plain Chromium page (Playwright) that mounts `src/gui.tsx`, built by Vite, with a stand-in for `@opencode/plugin/gui` and an in-memory RPC holding 55 made-up models, 53 of them usable. Results:
+
+- The table opened with the search box focused and listed 53 rows by provider.
+- Searching "son" left Sonnet 5.5, and "router 3" left the models whose names have a 3. A search with no match said so.
+- Add put the model in with the default effort and marked its row "✓ in the list".
+- The effort menu offered default, low, medium, high, xhigh and max, and saved "high". Add on the same model again added the default effort, and the first row's menu then disabled it.
+- The provider filter left the 7 usable `ollama-cloud` models; a deprecated one and a switched-off one stayed hidden.
+- Cheapest first put "$0 or not listed" first and "not listed" last. Largest context put the 1M models first.
+- "no tools" showed on the model without tools.
+- Escape and Done closed the table.
+- The decider menu still saved Clef, and the no-decider warning went away.
+
+**Two ways that did not work for checking the panel.**
+
+1. `opencode serve` also serves OpenCode's web app, with a password login, but the web app loads no plugin panels or pills.
+2. `OPENCODE_DESKTOP_TEST_ROOT=<folder>` starts a second, separate Desktop with its own app data and XDG folders, but its managed service wants the same fixed port as the owner's (28894). Port 28995 was then set in the test folder's `config/opencode/service.json`, and a service started there by hand listened on 28995. The second Desktop still failed within 100 ms with "Background service failed to start", the state the owner's service was in at the time. This is not understood. The second Desktop was closed, and the owner's was not touched.
+
+**Not tested:** the table inside Desktop itself, and the terminal app.

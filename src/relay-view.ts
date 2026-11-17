@@ -3,6 +3,7 @@ import type { Decision } from './relay-store.js';
 import { modeLabel } from './router.js';
 import { MAX_CHARS, MAX_FILE_NAMES } from './decider.js';
 import { parseUsd } from './costs.js';
+import type { ModelChoice } from './settings.js';
 
 // What the Modes tab says in words. Pure, so it runs under node:test; the panel bundles it, so nothing here may import from `node:`.
 
@@ -20,6 +21,40 @@ const known = (a: bigint | null, b: bigint | null) => a === b ? 0 : a === null ?
 /** For the "Add a model" menu: the input price, then the output price, compared exactly; a price not listed sorts last. "$0 or not listed" counts as $0. */
 export function cheapestFirst(a: { name: string; cost: Pick<ModelCostView, 'inputPerMillion' | 'outputPerMillion'> }, b: { name: string; cost: Pick<ModelCostView, 'inputPerMillion' | 'outputPerMillion'> }): number {
   return known(exact(a.cost.inputPerMillion), exact(b.cost.inputPerMillion)) || known(exact(a.cost.outputPerMillion), exact(b.cost.outputPerMillion)) || a.name.localeCompare(b.name);
+}
+
+/** A price in the model table, whose column header says it is per 1M tokens, input / output. */
+export function priceCell(cost: Pick<ModelCostView, 'inputPerMillion' | 'outputPerMillion' | 'tiered'>): string {
+  const { inputPerMillion: input, outputPerMillion: output } = cost;
+  if (input === null && output === null) return 'not listed';
+  if (input === '0' && output === '0') return '$0 or not listed';
+  return `${usd(input)} / ${usd(output)}${cost.tiered ? ' (base tier)' : ''}`;
+}
+
+/** A context window the way people say it: 8K, 200K, 1M. Zero means the catalog does not list it. */
+export function contextLabel(tokens: number): string {
+  if (!(tokens > 0)) return 'not listed';
+  if (tokens < 1000) return String(tokens);
+  const thousands = Math.round(tokens / 1000);
+  return thousands < 1000 ? `${thousands}K` : `${+(tokens / 1_000_000).toFixed(1)}M`;
+}
+
+type TableModel = { providerID: string; id: string; name: string; cost: Pick<ModelCostView, 'inputPerMillion' | 'outputPerMillion'>; limit: { context: number } };
+export type TableOrder = 'provider' | 'price' | 'context';
+const orders: Record<TableOrder, (a: TableModel, b: TableModel) => number> = {
+  provider: (a, b) => a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name),
+  price: cheapestFirst,
+  context: (a, b) => b.limit.context - a.limit.context || a.name.localeCompare(b.name),
+};
+/** The rows of the "Add a model" table: models with every typed word in their provider, id or name, of one provider when one is chosen, in the order chosen. */
+export function modelRows<M extends TableModel>(models: readonly M[], view: { query: string; provider: string; order: TableOrder }): M[] {
+  const words = view.query.toLowerCase().split(/\s+/).filter(Boolean);
+  return models.filter(model => (!view.provider || model.providerID === view.provider) && words.every(word => `${model.providerID} ${model.id} ${model.name}`.toLowerCase().includes(word))).sort(orders[view.order]);
+}
+
+/** What "Add" puts in a mode's list for this model: the default effort when it is not in the list yet, else the first effort that is not; undefined when every one is. */
+export function nextEffort(chosen: readonly ModelChoice[], model: { providerID: string; id: string; variants: readonly string[] }): string | null | undefined {
+  return [null, ...model.variants].find(variant => !chosen.some(choice => choice.providerID === model.providerID && choice.id === model.id && choice.variant === variant));
 }
 
 type Shown = Pick<Decision, 'mode' | 'model' | 'confidence' | 'fit' | 'ms' | 'note'>;

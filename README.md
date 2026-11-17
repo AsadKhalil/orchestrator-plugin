@@ -4,7 +4,7 @@
 
 > Relay is early. It is built for OpenCode 2.3.0. It has run against tests; in an isolated OpenCode with a mock model, on Linux, macOS and Windows, on every push; and in live checks in a full OpenCode Desktop setup on Windows, with Ollama Cloud models (16 Nov 2026) and Claude models (17 Nov 2026). See [Status](#status).
 
-(The package and its internal ids are still named `feature-pilot`. That is on purpose: renaming them would lose saved settings.)
+The package is `relay-opencode`. Until 17 Nov 2026 it was called `feature-pilot`; settings saved under that name are not carried over.
 
 ## Why use it
 
@@ -46,7 +46,7 @@ To update later: `git pull`, `npm ci`, `npm run build`, then restart OpenCode.
 ## Set up (once, in OpenCode Desktop)
 
 1. Open a chat, open the command palette (Ctrl+K) and run **Open Relay**. The Relay panel opens beside the chat.
-2. Add models to **Plan**, **Execute** and **Review**. Each model shows its price per million tokens, as OpenCode lists it; set **Order the "Add a model" lists** to **Cheapest first** to sort by price. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
+2. Add models to **Plan**, **Execute** and **Review**: press **+ Add a model** under a mode. A table lists the models OpenCode offers you, with the price per million tokens (input / output) and the context size. Type in the search box to find one by its name or its provider, narrow the table to one provider, or sort it by price (cheapest first) or by context (largest first). Press **Add** on a row. Each chosen model has a menu for its effort (low, high and so on) when the model offers them. When a mode has more than one model, write a short "use it for" line for each, for example "hard design and architecture" or "small, quick edits".
 3. Choose a **decider**: a decision model. OpenCode lists the ones you can use; `opencode/jev-1.13-free` is free. Until you choose one, the panel and the pill warn you: without a decider, Relay switches nothing.
 4. Type a sample message in the test box and press **Try** to see what Relay would pick.
 
@@ -54,7 +54,7 @@ To update later: `git pull`, `npm ci`, `npm run build`, then restart OpenCode.
 
 The settings are shared by all your projects. The terminal app has no settings screen, so set them up in Desktop.
 
-**If Open Relay is missing:** it shows only while a chat is open. Then check Settings → Extensions → Plugins: `feature-pilot` should be listed with **Reload** and a switch. If that list stays empty, or Desktop says it can't reach your computer, OpenCode's background service is not running properly and Desktop shows no plugin panels. Quit Desktop, end `opencode-cli.exe` (the one started with `serve --service`) in Task Manager, and start Desktop again.
+**If Open Relay is missing:** it shows only while a chat is open. Then check Settings → Extensions → Plugins: `relay-opencode` should be listed with **Reload** and a switch. If that list stays empty, or Desktop says it can't reach your computer, OpenCode's background service is not running properly and Desktop shows no plugin panels. Quit Desktop, end `opencode-cli.exe` (the one started with `serve --service`) in Task Manager, and start Desktop again.
 
 ## Use
 
@@ -84,6 +84,8 @@ OpenCode makes every request, with your OpenCode login. Relay never sees your AP
 - **Ran in a full OpenCode Desktop setup with Claude models (Windows, 17 Nov 2026):** six plain messages with Relay on, each answered by its mode's model (Sonnet for Plan and Review, Haiku or Sonnet for Execute by their "use it for" lines); a review cycle that found a planted bug on the first check and approved the fix on the second; `/relay` with an @-mentioned file and an @-mentioned picture; a pasted picture with Relay on; a busy chat; and the panel's prices, Cheapest first, Recent choices and warning. It found and fixed two problems with Desktop: its model picker did not follow Relay's switches, and pasted pictures were not counted.
 - **The install steps above, followed from a fresh clone of this repository in a throwaway OpenCode profile (Windows, 17 Nov 2026):** OpenCode loaded Relay and `/relay on` worked in a new chat.
 - **Not yet run in a full setup:** the interactive terminal app, and Relay with a real decision model on macOS and Linux.
+- **The model table (17 Nov 2026), in a plain browser page that runs the panel's real code with a fake OpenCode:** search, the provider filter, the three orders, Add, adding a model again with another effort, and the effort menu all did what they should. Not yet seen in Desktop itself.
+- **Renamed on 17 Nov 2026:** the package and the plugin id are now `relay-opencode` (they were `feature-pilot`). The renamed package passed the isolated real-host check on Windows.
 - **Removed on 17 Nov 2026:** the older feature pipeline in the side panel (the Run, Spend and More tabs). Anything it saved is left in place and ignored.
 
 Details are in the [compatibility findings](docs/compatibility.md) and the [change log](docs/implementation-progress.md).
