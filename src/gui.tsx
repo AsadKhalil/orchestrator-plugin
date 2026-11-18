@@ -56,7 +56,7 @@ const ModelTable = (props: { label: string; models: Rated[]; source: string; act
           <td><span class="rl-t-name">{model.name}</span><small>{model.providerID}{props.mark(model)}</small></td>
           <td>{priceCell(model.cost)}</td>
           <td title={model.limit.context > 0 ? undefined : 'Context size not listed'}>{contextLabel(model.limit.context)}</td>
-          <td title={model.matched ? `Artificial Analysis, for ${model.matched} on OpenRouter` : 'No index found for this model'}>{indexLabel(model.index)}</td>
+          <td title={model.matched ? `Artificial Analysis, for ${model.matched} on OpenRouter${model.variants.length ? ', at its highest effort' : ''}` : 'No index found for this model'}>{indexLabel(model.index)}</td>
           <td><button type="button" class="rl-btn sm" disabled={!props.can(model)} title={props.tip?.(model)} aria-label={props.actionLabel(model)} onClick={() => props.pick(model)}>{props.action}</button></td>
         </tr>}</For></tbody>
       </table>
@@ -105,12 +105,12 @@ export default Plugin.define({
         });
         const scores = createMemo(() => { const value = intel(); return value?.session === props.session ? value : undefined; });
         const rated = (model: Model) => { const score = scores()?.byModel.get(`${model.providerID}/${model.id}`); return { ...model, index: score?.index ?? null, matched: score?.matched ?? null }; };
-        const indexText = (model: Model) => { const index = rated(model).index; return index === null ? '' : ` · index ${indexLabel(index)}`; };
+        const indexText = (model: Model) => { const index = rated(model).index; return index === null ? '' : ` · index ${indexLabel(index)}${model.variants.length ? ' at its highest effort' : ''}`; };
         const indexSource = () => {
           const value = scores();
           if (!value) return 'Index: loading…';
           if (!value.source) return `Index: not shown (${value.note}).`;
-          return `Index: ${value.source}. For the model in general, not your effort setting.${value.note ? ` (${value.note})` : ''}`;
+          return `Index: ${value.source}. For a model with efforts it is the highest effort's score; lower efforts score less.${value.note ? ` (${value.note})` : ''}`;
         };
         // Recent choices, asked for again every 5 seconds while the panel is open, so a /relay sent meanwhile shows up without a Refresh.
         const [recent, setRecent] = createSignal<{ session: Session; decisions: Decision[] }>();
