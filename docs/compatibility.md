@@ -745,3 +745,15 @@ The owner answered the three open questions with "yes do it".
 **The repository.** `AsadKhalil/orchestrator-plugin` was renamed to `AsadKhalil/relay-opencode` on GitHub. The old address answers with a 301 to the new one. `package.json`, the README and AGENTS.md now use the new address.
 
 **Not tested:** the decider's table inside Desktop; a live helper started by a Claude model or by Superpowers since this change.
+
+## 2026-11-17 and 18 — The owner's server froze again; Relay now loads from a fixed copy (Windows 11, Desktop 2.3.0)
+
+At 09:34 on 17 Nov the two rebuilt files from the entry above were copied into this repository's `dist/`, which the owner's OpenCode then loaded. Twenty seconds later the long-running OpenCode terminal client reported "Event stream stalled", and a loop began.
+
+- Each new server answered for a short while, booted the folders Desktop had open (five in one minute), and loaded all eight of the owner's plugins for each of them (36 plugin loads in that minute). Its requests began to time out (HTTP 499), it went silent, and it was replaced. This went on about every one to three minutes.
+- At 11:04 a replacement failed to open the database ("disk I/O error") and stayed in the failed state, answering `/api/info` with 500. Desktop, restarted by the owner at 15:03, tried twice and then showed its error page.
+- Relay was the last plugin each server loaded before it went silent. It is also last in the owner's plugin list, and the same overload has been seen since 10 Nov, before Relay existed. So Relay is not shown to be the cause.
+- On 18 Nov, with the owner's yes, Relay was installed from a packed build of `feac56b` into a folder of its own, and the owner's `opencode.json` was pointed at it. Only that one entry changed, and a backup was kept beside the file. The stuck server was then ended.
+- That copy loads in a throwaway OpenCode: Relay was listed after 10 s and answered `getRelay`. Desktop needs a restart from the owner to start a new server.
+
+**Not yet seen:** the owner's Desktop on the fixed copy, and whether the freezes stop.
