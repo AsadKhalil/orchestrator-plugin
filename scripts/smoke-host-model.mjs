@@ -26,7 +26,8 @@ const root = await mkdtemp(join(tmpdir(), 'relay-model-')), project = join(root,
 const baseEnv = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'USER', 'SHELL', 'SystemRoot', 'COMSPEC', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
 Object.assign(baseEnv, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null' });
 const sleep = ms => new Promise(done => setTimeout(done, ms));
-const npm = (args, cwd) => execFile(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, { cwd, shell: process.platform === 'win32', timeout: 240_000, env: baseEnv });
+// Installing the packed plugin pulls about 270 packages; on GitHub's Windows runners that took over four minutes once (18 Nov).
+const npm = (args, cwd) => execFile(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, { cwd, shell: process.platform === 'win32', timeout: 600_000, env: baseEnv });
 const free = async () => { const l = createServer(); l.listen(0, '127.0.0.1'); await once(l, 'listening'); const { port } = l.address(); await new Promise(d => l.close(d)); return port; };
 const observed = []; const note = (label, value) => observed.push(`${label}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
 
