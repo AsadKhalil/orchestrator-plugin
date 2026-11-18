@@ -202,6 +202,11 @@ test("when a step down does not pay, the chat's model stays for this message, th
     note: "moving this chat to p/sonnet would cost about $0.14 to read it again and save about $0.09 over 6 requests, so the chat's model stays" });
 });
 
+test('a saving that is more than the cost, but less than one and a half times it, is named as such in the note', () => {
+  // Sonnet to Haiku above Haiku's price step at 100,000 tokens: $0.069 to read the chat again, $0.075 saved over 6 requests.
+  assert.deepEqual(went(move('sonnet', 'haiku', 120_000)), ['sonnet', "moving this chat to p/haiku would cost about $0.07 to read it again and save about $0.08 over 6 requests, less than one and a half times that cost, so the chat's model stays"]);
+});
+
 test('what the picked model still holds of the chat is not read again', () => {
   const held = (agoMs: number) => move('opus', 'sonnet', 100_000, { answered: [{ providerID: 'p', id: 'sonnet', tokens: 92_000, agoMs }] });
   assert.equal(went(move('opus', 'sonnet', 100_000))[0], 'opus');

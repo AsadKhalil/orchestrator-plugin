@@ -142,7 +142,7 @@ function stayOrGo(mode: Mode, pick: ModelChoice, current: ModelChoice | null, us
   const held = chat.answered.find(item => is(item, pick) && item.agoMs <= CACHE_MS)?.tokens ?? 0;
   const saving = BigInt(requests) * less, extra = BigInt(Math.max(0, size - Math.round(held))) * (to.write - to.read);
   if (2n * saving >= 3n * extra) return go();   // it pays when the saving is at least one and a half times the extra
-  return { stay: true, note: `moving this chat to ${name} would cost ${aboutUsd(extra / 1_000_000n)} to read it again and save ${aboutUsd(saving / 1_000_000n)} over ${requests} requests, so the chat's model stays` };
+  return { stay: true, note: `moving this chat to ${name} would cost ${aboutUsd(extra / 1_000_000n)} to read it again and save ${aboutUsd(saving / 1_000_000n)} over ${requests} requests${saving >= extra ? ', less than one and a half times that cost' : ''}, so the chat's model stays` };
 }
 
 /** `unsure` says what an answer under UNSURE_BELOW means: Plan for `/relay`, no change for a chat whose switch is on. */

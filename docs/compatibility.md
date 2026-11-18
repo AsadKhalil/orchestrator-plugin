@@ -813,7 +813,7 @@ The system text of two models differs only in the two lines under "# Your Model"
 
 **A mock can be a decision model.** Earlier sections say that none can. A model with `type: 'decision'` and `package: '@opencode/ai/providers/openai-compatible/decisions'` is listed as a decision model, and `experimental.generate.decisions` then sends `POST <baseURL>/systemone` with `{ state, questions: { <name>: { type: 'choice', instructions, criteria } }, model }` and reads `{ model, answers: { <name>: { type: 'choice', choice, probabilities, confidence } }, usage: { input_tokens, output_tokens, cost } }`. With the packages `@opencode/ai/providers/openai-compatible` and `@opencode/ai/providers/openai` the host answered "has no decision API opencode can call". The smoke now has such a mock, so it makes a real switch for the first time.
 
-**The packed plugin (`npm run smoke:host:model`), passed on Windows, twice; the second run was on the final build.** In this order:
+**The packed plugin (`npm run smoke:host:model`), passed on Windows, twice; the second run was on the final build.** After the push (commit `c33e4ba`), GitHub's checks passed it on Linux, macOS and Windows too, with the tests on Linux and Windows (run 44312055624). In this order:
 
 - With no decider, `/relay` sent one message, and its record got what the reply took: 1 request, 10 tokens read new, none from a cache, a cost of 0 (the model lists no price), and the first word after 180.8 s in the first run and 80.3 s in the second. That was the first reply of a fresh server; the later ones took 0.6 to 1.6 s.
 - The mock decision model was accepted as the decider. The model list gave the prices of `model-big` as 4, 20, 0.2 and 5 (input, output, cached read, cache write), with no steps.
@@ -851,5 +851,57 @@ At both sizes the line of the cheaper model got the stay note ("… would cost a
 - A real decider together with the new rules, and helpers. A helper's record names no message and gets no reply.
 - A compaction that OpenCode starts by itself in the middle of a reply.
 - The new line of Recent choices in Desktop. It was checked in tests only.
-- macOS and Linux. GitHub's checks run the longer smoke there on the next push.
 - The owner's Desktop, which runs the fixed copy from `feac56b`.
+
+## 2026-11-18 — Before the paid cost test: what OpenCode sends to Anthropic, seen against a local stand-in (Windows 11, OpenCode 2.3.0 CLI)
+
+**Nothing here was sent to Anthropic, and nothing was paid for.** The paid run (stage 1 of the cost report's test, which the owner agreed to on 18 Nov: "yes run paid test") has not happened yet. It waits for an Anthropic API key with a spending limit. This section is the free preparation for it.
+
+**What ran.** A throwaway script (not in the repository) started an isolated OpenCode 2.3.0 with the packed plugin, a mock decision model on loopback, and OpenCode's own Anthropic provider. The provider's address was moved to a loopback stand-in for `POST /v1/messages` with `providers: { anthropic: { settings: { baseURL } } }` in the project's config: a partial entry is laid over the listed provider. The key was a placeholder. So the requests are the ones OpenCode builds for Anthropic, and every answer, token count and cache hit was made up by the stand-in, which kept a pretend cache for each model. The waits were cut to a twentieth. The script ran to its end twice: a chat grown to 30,000, 60,000 and 120,000 tokens (62 requests), and a chat that starts at 120,000 tokens (21 requests).
+
+**The price list** (`model.list`). The provider `anthropic` is listed only when `ANTHROPIC_API_KEY` is set in the host's environment, and a placeholder is enough for the list. USD for a million tokens:
+
+| Model | Input | Output | Cached read | Cache write |
+|---|---|---|---|---|
+| `claude-sonnet-5-5` | 2 | 10 | 0.1 | 2.5 |
+| `claude-haiku-5-5`, a chat up to 100,000 tokens | 0.1 | 0.5 | 0.01 | 0.125 |
+| `claude-haiku-5-5`, a chat above 100,000 tokens | 0.5 | 2.5 | 0.05 | 0.625 |
+| `claude-opus-5-5` | 4 | 20 | 0.2 | 5 |
+
+Each has a context of 1,000,000 tokens. Sonnet 5.5 has the efforts low, medium, high, xhigh and max; Haiku 5.5 has those and none.
+
+**How OpenCode 2.3.0 builds a request to Anthropic.**
+
+- The body has `model`, `system`, `messages`, `tools`, `stream`, `max_tokens` (128,000) and `thinking` (`{ type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }`), with the beta headers `interleaved-thinking-2025-05-14` and `thinking-binding-controls-2026-08-01`.
+- It marks four places for the cache and names no lifetime, so Anthropic's default of five minutes applies: the last tool, the first and the last block of the system text, and the last message. Relay's five minutes are this default.
+- The system text has four blocks. The second names the model ("# Your Model", with its name, provider id and model id), so it differs from model to model. The other three and the tools were the same for Sonnet and Haiku.
+- A change of agent (`build` to `plan`) adds a user message with a `<system-reminder>`. The system text and the tools stay as they were.
+- Relay's review rules go in as a `system` message in the middle of the chat (`<context key="relay-review-rules">`), and taking them off adds another ("The context under "relay-review-rules" no longer applies. Disregard it."). Nothing earlier in the request changes.
+- A change of effort adds a `system` message with no text and `output_config: { effort }`. The first time a chat gets an effort, the top-level `thinking` also gains `display: 'summarized'` and the beta `mid-conversation-output-config-2026-07-01` is added. A later change of effort changed neither. Relay takes a change of effort to cost nothing; whether the first one costs the cache is for the paid run.
+- With the chat on Haiku at its default effort, that effort message is left out of the request. Back on Sonnet it is in its old place again, so Sonnet gets the text it read before.
+
+**An isolated host still reads the home folder.** The four XDG folders do not cover it. With the real `USERPROFILE` passed through (as `scripts/smoke-host-model.mjs` does, and as the first probe here did), the system text of every request listed the 33 personal skills found under the real home folder (21,100 of its 28,970 characters), and named the working folder and the temp folder, which hold the Windows user name. The smoke talks only to a loopback mock, and GitHub's runners have no such skills, so nothing personal has left a machine. For a run against a real provider the host must also get a scratch `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP`, and a scratch root outside the profile. With those the system text was 7,464 characters (blocks of 1,494, 93, 5,639 and 238), with no skill list and no user name. The paid script does this, and its recorder does not pass on a request that names the Windows user.
+
+**Keeping a real model to the scratch project.** The project's config denies `shell`, `webfetch`, `websearch`, `subagent`, `skill`, `question`, `external_directory` and `experimental_image_generate`. Config rules come after an agent's own rules, and the last match wins. The tools then offered were `edit`, `glob`, `grep`, `read`, `skill`, `write` and `execute`. Denying `execute` as well made the host offer its session and worktree tools one by one instead (`opencode_session_move`, `opencode_worktree_create` and others), so it is left allowed. The stand-in then asked for three things as a model would. A read of `C:\Windows\win.ini` and a write outside the project each ended in "Permission denied: external_directory", and no file was written. A shell call ended in "No tool named "shell" is currently available".
+
+**What Relay recorded.** In both runs every `/relay` record got its reply (37 and 11 records), and each agreed with the stand-in's own figures for the reply's first request: read new is `input_tokens` plus `cache_creation_input_tokens`, from cache is `cache_read_input_tokens`, and the cost is those at the list prices, Haiku's step included. OpenCode's own counts and cost agreed for all 62 and 21 requests. With made-up figures this shows only that OpenCode and Relay pass on what the provider reports and price it by the list.
+
+**The cost check with this price list** (arithmetic only; the chat on Sonnet, the line asking for Haiku, Haiku holding nothing of the chat):
+
+| Chat | To read it again | Saved over 6 requests | Relay |
+|---|---|---|---|
+| 30,712 tokens | $0.0035 | $0.0665 | moved the chat to Haiku |
+| 60,332 tokens | $0.0069 | $0.0825 | moved the chat to Haiku |
+| 120,703 tokens | $0.0694 | $0.0756 | kept the chat on Sonnet |
+
+Above 100,000 tokens Haiku's prices are five times higher, so the move stops paying there. The last row is from the second run. In the first run Haiku had answered in the same chat seconds before, because the waits were cut, so at 120,000 tokens Relay counted only what had been added since and moved the chat.
+
+**One fix came out of it.** The note for the last row read "moving this chat to anthropic/claude-haiku-5-5 would cost about $0.07 to read it again and save about $0.08 over 6 requests, so the chat's model stays". On its own that looks wrong: the saving is the larger amount. The check asks for a saving of at least one and a half times the cost, and the note left that out. It now adds ", less than one and a half times that cost" when the saving is at least the cost. A test covers it, red before the change and green after.
+
+**The smoke on this build (Windows), twice.** The first run stopped at its first message: the chat had not finished when the client gave up waiting for the answer's headers, after 300 s, on top of the up to 240 s the smoke waits for the model request. The second run passed, with the first word of that first reply after 96.6 s. The first reply of a fresh server with the smoke's mock provider has been slow on this machine all day (180.8 s and 80.3 s in the morning's runs), while the later replies took about a second, and the first reply through OpenCode's own Anthropic provider in the dry runs took about 2 s. The machine was busy (CPU at 76%). The cause was not looked for.
+
+**Not tested** (all of it waits for the paid run):
+
+- Anthropic's own figures and prices: what a change of agent, the review rules, an effort, a move to Haiku, and the way back to Sonnet after one, four and six minutes really read from the cache and cost.
+- How real models behave in the test, and how many requests and tokens their replies to small tasks take. The stand-in answered every message with 12 tokens.
+- The account's limits. Anthropic counts tokens read new and tokens written to a cache against a limit for each minute, and tokens read from a cache not at all (its rate-limits page, read on 18 Nov). A cold request of 120,000 tokens needs that much room at once, and a new account can start below the listed limits.
