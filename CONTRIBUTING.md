@@ -20,7 +20,8 @@ Thanks for helping. Relay is an OpenCode plugin (package `relay-opencode`). `/re
 - `src/` is the plugin. `index.ts` connects everything to OpenCode. `relay-command.ts` is `/relay`, `review-helper.ts` gives helpers that check work a Review model, `router.ts` holds the routing rules (pure functions, no OpenCode calls), `decider.ts` builds the question for the decision model, `relay-store.ts` keeps the settings and recent decisions, `relay-view.ts` holds the words the panel and the pill show, `rpc.ts` and `contract.ts` are the calls the panel makes, and `gui.tsx` is the side panel and the pill.
 - `tests/` holds `node:test` tests, run through `tsx`. `tests/relay-fakes.ts` is a fake OpenCode host for the Relay tests.
 - `scripts/` holds the smoke test against a real OpenCode binary (`smoke-host-model.mjs`), the package check, and the decider's example run.
-- `docs/` holds what was seen on real OpenCode hosts (`compatibility.md`), a dated log of changes (`implementation-progress.md`), and the design and plans (`superpowers/`).
+- `docs/` holds the pages the README links to (`guide.md`, `saving-money.md`, `privacy.md`, `status.md`, `data-sources.md`), what was seen on real OpenCode hosts (`compatibility.md`), a dated log of changes (`implementation-progress.md`), and the design and plans (`superpowers/`).
+- `docs/images/` holds the README's screenshots: the panel's real code (`src/gui.tsx`) in a plain page, with example settings and the model list Relay showed on 18 Nov 2026 (`docs/compatibility.md` says how they were made).
 
 ## How to make a change
 
@@ -47,7 +48,9 @@ Thanks for helping. Relay is an OpenCode plugin (package `relay-opencode`). `/re
 
 1. Raise `version` in `package.json` and add a dated line to `docs/implementation-progress.md`.
 2. Run `npm login`, then `npm publish`. `prepublishOnly` runs the four checks first and stops the release if one fails.
-3. People can then install with one line: `"plugins": ["relay-opencode"]` in their global `opencode.json`. OpenCode installs the package from npm by itself.
+3. npm may hold the release for review first. Until it goes live, `npm view relay-opencode version` can print `0.0.0-stage`: a two-file placeholder npm adds, whose description is "Temporary package placeholder for staged publishing". It stays in the version list, but the real version becomes `latest` once npm releases it (for 0.1.0, about three minutes later).
+4. People can then install with one line: `"plugins": ["relay-opencode"]` in their global `opencode.json`. OpenCode installs the package from npm by itself.
+5. npmjs.com shows the README from the published package, so a README change shows there only after the next release.
 
 ## Reporting a problem
 
