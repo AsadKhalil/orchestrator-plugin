@@ -35,20 +35,28 @@ test("a chat's size is what its latest answer read and wrote, and each model's l
     user('m2', 60_000), answer('a2', 'small', 60_020, { input: 300, read: 11300, write: 200, output: 40 }),
     user('m3', 120_000), answer('a3', 'big', 120_020, { input: 900, read: 11313, output: 60 }),
   ];
-  assert.deepEqual(chatFacts(messages, 200_000), { tokens: 12273, answered: [{ providerID: 'p', id: 'big', tokens: 12273, agoMs: 79_282 }, { providerID: 'p', id: 'small', tokens: 11840, agoMs: 139_282 }] });
+  assert.deepEqual(chatFacts(messages, 200_000), { tokens: 12273, answered: [{ providerID: 'p', id: 'big', tokens: 12273, agoMs: 79_980 }, { providerID: 'p', id: 'small', tokens: 11840, agoMs: 139_980 }] });
+});
+
+test("an answer's age runs from the start of its request, so a long answer does not make the cache look younger", () => {
+  // Anthropic counts a cache's lifetime from the start of the request that wrote or read it; the time the answer takes counts against it.
+  const fourMinutes = [user('m1', 900), answer('a1', 'big', 1000, { input: 9000 }, { time: { created: 1000, firstToken: 2000, completed: 241_000 } })];
+  assert.equal(chatFacts(fourMinutes, 311_000).answered[0].agoMs, 310_000, 'over five minutes since the request began, though the answer ended 70 seconds ago');
+  const noStart = [user('m1', 900), answer('a1', 'big', 1000, { input: 9000 }, { time: { completed: 241_000 } })];
+  assert.equal(chatFacts(noStart, 311_000).answered[0].agoMs, 70_000, 'with no start time, the end is used');
 });
 
 test('a new chat and a chat that was just compacted have nothing to lose; an answer still running and a failed compaction change nothing', () => {
   assert.deepEqual(chatFacts([], 5000), { tokens: 0, answered: [] });
   const before = [user('m1', 1000), answer('a1', 'big', 1047, { input: 11313 })], kept = chatFacts(before, 5000);
-  assert.deepEqual(kept, { tokens: 11318, answered: [{ providerID: 'p', id: 'big', tokens: 11318, agoMs: 3255 }] });
+  assert.deepEqual(kept, { tokens: 11318, answered: [{ providerID: 'p', id: 'big', tokens: 11318, agoMs: 3953 }] });
   assert.deepEqual(chatFacts([...before, { id: 'c1', type: 'compaction', status: 'completed', time: { created: 3000 } }], 5000), { tokens: 0, answered: [] });
   assert.deepEqual(chatFacts([...before, { id: 'c1', type: 'compaction', status: 'failed', time: { created: 3000 }, tokens: { input: 18946, output: 10, reasoning: 0, cache: { read: 6299, write: 0 } } }], 5000), kept);
   assert.deepEqual(chatFacts([...before, { ...answer('x1', 'small', 4020, { input: 99_999 }), type: 'compaction', status: 'failed' }], 5000), kept, 'an entry that is not an answer is never read as one, whatever it carries');
   // After a compaction that completed, the host lists the chat from the compaction's own entry on, and that entry has counts of its own (2.3.0, 18 Nov 2026).
   const compacted = [{ id: 'c1', type: 'compaction', status: 'completed', reason: 'manual', time: { created: 3000 }, model: { id: 'big', providerID: 'p', variant: 'default' }, cost: 0.008281, tokens: { input: 495, output: 5, reasoning: 0, cache: { read: 31005, write: 0 } } }, idle(3100)];
   assert.deepEqual(chatFacts(compacted, 5000), { tokens: 0, answered: [] });
-  assert.deepEqual(chatFacts([...compacted, user('m2', 4000), answer('a2', 'big', 4020, { input: 4000 })], 5000), { tokens: 4005, answered: [{ providerID: 'p', id: 'big', tokens: 4005, agoMs: 282 }] }, 'the next answer gives the new size');
+  assert.deepEqual(chatFacts([...compacted, user('m2', 4000), answer('a2', 'big', 4020, { input: 4000 })], 5000), { tokens: 4005, answered: [{ providerID: 'p', id: 'big', tokens: 4005, agoMs: 980 }] }, 'the next answer gives the new size');
   assert.deepEqual(chatFacts([...before, user('m2', 4000), answer('a2', 'small', 4020, { input: 99_999 }, { time: { created: 4020 } })], 5000), kept, 'not completed yet');
   assert.deepEqual(chatFacts([...before, null, 7, {}] as never, 5000), kept);
 });

@@ -39,7 +39,7 @@ export const brief = (error: unknown) => safeHead(describeError(error, 'unknown 
 export type LineAnswer = { index: number | null; confidence: number };
 export type DeciderAnswer = { kind: 'answer'; mode: Mode; confidence: number; lines: Partial<Record<Mode, LineAnswer>>; ms: number; costUsd: string | null } | { kind: 'none'; reason: string; ms: number };
 export type RoutableModel = OfferedModel & { capabilities: { input: readonly string[] }; limit: { context: number }; cost?: ModelCostView };
-/** What is known of a chat: its size in tokens, and each model's latest answer in it, newest first, with the chat's size then and how long ago it was. */
+/** What is known of a chat: its size in tokens, and each model's latest answer in it, newest first, with the chat's size then and how long ago its request began. */
 export type ChatFacts = { tokens: number; answered: readonly { providerID: string; id: string; tokens: number; agoMs: number }[] };
 /**
  * What comes with the message: whether a picture does, and about how many tokens the attached files take. For a message that goes to a chat

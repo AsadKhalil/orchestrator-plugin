@@ -915,3 +915,87 @@ In an isolated OpenCode 2.3.0 on Windows (the `@opencode/cli-windows-x64@2.3.0` 
 ## 2026-11-18 — the README's screenshots
 
 The screenshots in `docs/images/` show the panel's real code (`src/gui.tsx`, the same as in 0.1.0) mounted by Vite in a plain page, 380 px wide like Desktop's side panel, with a stand-in for `@opencode/plugin/gui` and an in-memory RPC, in headless Chrome at twice the pixel density. The model list, the deciders and the index scores are what Relay 0.1.0's own RPC returned from an isolated OpenCode 2.3.0 with Anthropic and OpenAI set up through synthetic keys: 129 models, `opencode/jev-1.13-free` as the only decision model, and 21 index matches (2.2.7 returned the same). No model request was made. The settings and the Recent choices rows are made up; their costs follow the listed prices. This is not Desktop: there the panel sits in Desktop's side panel, with Desktop's fonts and colours.
+## 2026-11-18 — The owner's Desktop: the fixed copy holds today's build, Desktop moved itself to 2.3.2, and its service kept being replaced (Windows 11, Desktop 2.3.0, then 2.3.2)
+
+**Leave given.** On 18 Nov the owner said "Yes, do it now" to this one step: close Desktop and end its background service, install today's build into the fixed copy, open Desktop again, and send one short `/relay` message in a new chat. It covers that step only.
+
+**What was done.**
+
+- Desktop was closed and its service was ended (12:37). The fixed copy under the OpenCode config folder was updated with `npm install` of a packed build of commit `01b59fb` ("changed 1 package"). Its other packages were left as they were: `package.json` and `package-lock.json` have not changed since `feac56b`, the build it held before.
+- Desktop 2.3.0 was started again at 12:38, with a debugging port, and its service loaded the new copy.
+- At 12:43 Desktop installed 2.3.2, which it had downloaded earlier, and started again by itself, without the debugging port. It was started again at 12:46, from Explorer, with the owner at the PC.
+- On 2.3.2 the service log shows Relay loading from the fixed copy (`loading plugin`, then the watchers on `dist/index.js` and `dist/gui-experimental.cjs`), with no error or warning about it.
+
+**Not done.** The panel was not opened and no `/relay` message was sent, so the new line in Recent choices ("First request of the reply: …") has still not been seen in Desktop. After the update there was no debugging port, the owner was using Desktop, and its service was not steady (below).
+
+**Relay has no settings in the owner's OpenCode since the rename.** A copy of the service's database was read for table names, key names and sizes only, and then deleted. Relay's keys are all under the old id `feature-pilot`, last written on 17 Nov; there is none under `relay-opencode`. So in the owner's Desktop Relay has no modes and no decider until they are chosen again, as the note on the rename says.
+
+**The service kept being replaced.**
+
+- In an episode, about 55 seconds after a service starts, Desktop's window log has "event stream disconnected", "server thrashing detected" and "The server took too long to answer", and Desktop starts another service (`reason: 'missing'`). Each new service logs for two to four seconds, while it loads the plugins of one or two project folders, and then logs nothing. The service log has 37 service starts for the day, 27 of them after noon.
+- Two episodes were seen: 12:20 to 12:55, and 15:57 to 16:01. The first began before the fixed copy was updated, so with the build of `feac56b`.
+- The second began 54 seconds after a read request made for this check. Relay's settings were asked for through the service, for a project folder the service had not loaded yet. The service loaded that folder's eight plugins, answered "RPC is unavailable: relay-opencode", and never answered the next request. That service had run for three hours. If a chat was working in it then, the chat was cut off.
+- Windows' event log has no crash and no hang for the service.
+- The service that lasted (started 16:01) used 201 seconds of processor time in its first four and a half minutes, read 403 MB and wrote 365 MB, with no chat running. In its database the only thing that changed was the stored model catalog (`models-dev:v2:catalog`, 13 MB). It had loaded five project folders, the home folder among them, and loaded the eight plugins twelve times in its first five minutes.
+- The PC was busy with other work at those times (90 to 100% processor load: a test run, a browser, Windows Defender).
+- On the same PC, minutes later, an isolated OpenCode 2.3.2 with a scratch home was ready about ten seconds after its start.
+- What Relay does when it is loaded: it registers its command, three hooks and its RPC, and does no work of its own (`src/index.ts`, `src/rpc.ts`). Its lines are the last in each run's log because it is the last plugin in the owner's list.
+- The cause was not found.
+
+Nothing more was sent to the owner's service after 15:57.
+
+## 2026-11-18 — The cost test with real Claude models, through the Claude Agent provider and the Claude Code login (Windows 11, OpenCode 2.3.2 CLI, Claude Code 2.1.327)
+
+**Leave given.** The owner, 18 Nov: "yes run paid test and do this  Real models, real prices and a real cache." No API key was given. Instead: "i already have cladue agent logged in you can use anthropic models". It covers this test only.
+
+**How it ran.**
+
+- An isolated OpenCode 2.3.2, the CLI that comes with Desktop 2.3.2. Its four XDG folders, its home folder and its temp folder were scratch folders in a scratch root outside the profile. It had a throwaway password, the packed build of commit `01b59fb`, and a mock decision model on loopback that answered what the script told it to.
+- One real place was named: `CLAUDE_SECURESTORAGE_CONFIG_DIR` pointed Claude Code at the folder that holds its login. The Claude Agent integration was then connected through the API (`integration.connect.external`, method `claude-login`), as Desktop's Providers page does. The integration list fills a few seconds after the host's first answer.
+- Claude Code kept its own files in the scratch home. Each scratch root was removed after its run. The real `.claude` folder was the same before and after: the number of project folders, no new config file, and the time of the login file.
+- The model could use only the files of the scratch project. Shell, web, helpers, skills, questions and folders outside the project were denied, and it asked for none of them.
+- No recorder stood between OpenCode and Anthropic: with a base URL set, the login would pass through it and the provider takes another path. So each count below is what OpenCode keeps for a request (`session.context`): tokens read new (input and written to cache), read from cache, and written out.
+- Three runs, from 16:31 to 17:12: 49 answers and 91,324 tokens read new in all.
+
+**What the provider lists.** `claude-agent/sonnet`, `haiku`, `opus` and `fable`, each with no price (`cost: []`), a context of 1,000,000 and five efforts. Each answer's cost is 0. Which version answers under each name is Claude Code's choice, and OpenCode does not keep it. Some answers carry the plan's own limit figures (`native.rateLimit`: the share used of the five-hour and the seven-day limit, and when each starts again). They were not used here, because other work ran on the same account. In the CLI's program text, the price source for this provider is none for a subscription login; with an API-key login of Claude Code it is the `anthropic` list (read, not tried).
+
+**What Relay did.** `/relay` placed each of 20 messages, and each record got what its reply took: the requests, the tokens read new and from cache, and the wait for the first word. It shows no cost, because 0 can mean "not listed". When the line picked another model than the chat's, Relay moved the chat; within five minutes of the chat's last answer the record said "no price listed, so no cost check". On this route too, OpenCode keeps one entry for each request of a reply.
+
+**One chat of about 30,000 tokens, with a real cache.** Tokens of the request that answered:
+
+| Step | Model | Read new | From cache |
+| --- | --- | --- | --- |
+| One more request | Sonnet | 20 | 30,060 |
+| Execute to Plan | Sonnet | 194 | 30,076 |
+| Review rules on | Sonnet | 255 | 30,266 |
+| Review rules off | Sonnet | 57 | 30,517 |
+| Plan to Execute | Sonnet | 93 | 30,570 |
+| Effort changed to low | Sonnet | 21 | 30,659 |
+| Moved to Haiku, first request | Haiku | 24,706 | 6,232 |
+| Second request on Haiku | Haiku | 76 | 30,880 |
+| Back to Sonnet, 1 minute after its last request | Sonnet | 463 | 30,693 |
+| Back to Sonnet, 4 minutes after | Sonnet | 503 | 31,096 |
+| Back to Sonnet, 6 minutes after | Sonnet | 353 | 31,539 |
+
+- A change of mode, the review rules and another effort left the cache whole.
+- A change of model made the new model read the chat new, once. The tokens it still read from cache are the start that every chat shares (the tools and the system text): an earlier chat had left them in Haiku's cache.
+- For that message, Recent choices ends: "First request of the reply: 24,706 tokens read new, 6,232 from cache, first word after 1.3 s. Requests in the reply: 1."
+- Not explained: the first request of one new chat on Haiku read 3,194 tokens from cache, where other new chats read 6,232 or 7,012.
+
+**How long a cache lasts on this route.** In the long chat, Sonnet read the whole chat from cache 6 minutes after its last request there (the last row of the table). Three more chats each read a file of their own and then got no request: after 6 minutes Haiku read 10,416 tokens from cache and 20 new; after 20 minutes Haiku read 10,448 tokens from cache and 20 new; after 20 minutes Sonnet read 9,643 tokens from cache and 20 new. So on this route a cache lasts longer than twenty minutes, for both models. Anthropic offers a lifetime of five minutes or of one hour, so this is the one-hour kind, which Claude Code must ask for; the request itself was not seen. OpenCode's own requests for the `anthropic` provider ask for five minutes.
+
+**Six small tasks** in a toy folder of three files (add a function, fix a bug, rename across the folder; nothing could be run): the replies took 3, 2, 3, 3, 2, 3 requests. A request read 224 to 4,715 tokens new, 586 in the middle, and wrote 106 to 811 out, 212 in the middle. The highest read was a first request on Haiku that also read part of the shared start new. Haiku reported up to 362 reasoning tokens in a request; Sonnet almost none. The edits landed in the toy folders.
+
+**Against the guesses in the cost check.**
+
+- **Five minutes.** For the `anthropic` provider this is the lifetime OpenCode asks for (seen against a stand-in on 18 Nov) and Anthropic's default. No real five-minute expiry was seen, because no API key was used. On the Claude Agent route a cache lasts longer, and the check does not run there.
+- **Counted from where.** Anthropic's documentation counts a cache's lifetime from the start of the request that wrote or read it; the time the answer takes counts against it. Relay counted from the end of the answer. Changed, test first: the age now runs from the start of the request. This comes from the documentation; no run showed it.
+- **6 requests.** The toy tasks took 2 or 3. Not changed: the tasks were small and could run nothing, and Relay's own records take over after three replies of a line.
+- **1,500 tokens new and 500 out for a request.** The toy tasks took about 586 and 212. Not changed, for the same reason.
+- **One and a half.** A margin; one run cannot show it. Seen: the move to Haiku read a fifth less than the whole chat, because the shared start was already in Haiku's cache.
+
+**At list prices.** Arithmetic only: nothing was charged on this route. OpenCode's prices for Claude Sonnet 5.5 and Haiku 5.5 are the ones in Anthropic's own price list (Sonnet $2 in, $10 out, $0.10 cache read, $2.50 cache write for a million tokens; Haiku $0.10 and $0.50 up to 100,000 tokens, with cache read at a tenth and cache write at one and a quarter). At those prices one more request on Sonnet in this chat costs $0.0031, the first request on Haiku $0.0032, each later request on Haiku $0.0003, and the request that brought the chat back to Sonnet $0.0043.
+
+**Not tested.** A real bill. The `anthropic` provider with an API key, where the cost check runs. A real five-minute expiry. Chats above 32,000 tokens. Opus and Fable. A helper. Desktop. macOS and Linux.
+
+**The mock check on OpenCode 2.3.2.** `npm run smoke:host:model` passed against the 2.3.2 CLI on Windows on the same day ("PASS: on stock opencode v2.3.2 (win32)"), with mock models and a mock decider.

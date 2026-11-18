@@ -39,9 +39,10 @@ export function chatFacts(messages: unknown, now: number): ChatFacts {
   let answered: ChatFacts['answered'] = [];
   for (const message of list(messages)) {
     if (message.type === 'compaction' && message.status === 'completed') { answered = []; continue; }
-    const read = counts(message), done = message.time?.completed, { providerID, id } = message.model ?? {};
+    const read = counts(message), { created, completed: done } = message.time ?? {}, { providerID, id } = message.model ?? {};
     if (!read || typeof done !== 'number' || typeof providerID !== 'string' || typeof id !== 'string') continue;
-    answered = [{ providerID, id, tokens: read.fresh + read.cached + read.output, agoMs: Math.max(0, now - done) }, ...answered.filter(other => other.providerID !== providerID || other.id !== id)];
+    // The age runs from the start of the request, as Anthropic counts a cache's lifetime: the time an answer takes counts against it.
+    answered = [{ providerID, id, tokens: read.fresh + read.cached + read.output, agoMs: Math.max(0, now - (typeof created === 'number' ? created : done)) }, ...answered.filter(other => other.providerID !== providerID || other.id !== id)];
   }
   return { tokens: answered[0]?.tokens ?? 0, answered };
 }
