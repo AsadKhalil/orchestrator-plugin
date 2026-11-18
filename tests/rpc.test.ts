@@ -154,3 +154,31 @@ test('testDecider asks the chosen decider once and reports what Relay would do',
   assert.equal(host.requests.length, 3);
   assert.deepEqual((await one.getRelay({})).decisions, [], 'a try in the test box is not recorded');
 });
+
+test('the index comes from one public list fetched at most once a day, and an older copy stands in when a fetch fails', async () => {
+  const records = new Map<string, unknown>(), model = (providerID: string, id: string, name: string) => ({ providerID, id, name, enabled: true, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 100, output: 10 } });
+  const scored = (id: string, index: number) => ({ id, benchmarks: { artificial_analysis: { intelligence_index: index } } });
+  let reply = () => new Response(JSON.stringify({ data: [scored('anthropic/claude-sonnet-5.5', 54.5), scored('z-ai/glm-5.3', 61)] })), fetched = 0, now = Date.parse('2026-11-18T08:00:00Z'), handlers: any;
+  const ctx = {
+    location: { directory: '/repo' },
+    storage: { async get(key: string) { return structuredClone(records.get(key)); }, async set(key: string, value: unknown) { records.set(key, structuredClone(value)); } },
+    model: { async list(input: { types?: string[] }) { return { data: input.types?.[0] === 'decision' ? [model('d', 'judge', 'Judge')] : [model('claude-agent', 'sonnet', 'Sonnet 5.5'), model('ollama-cloud', 'glm-5.3', 'GLM-5.3'), model('local', 'llama', 'Llama Local')] }; } },
+    rpc: { async register(_definition: unknown, h: unknown) { handlers = asClient(h); return { async dispose() {} }; } },
+  };
+  await registerRpc(ctx as never, { fetcher: (async () => { fetched++; return reply(); }) as typeof fetch, now: () => now });
+  const first = await handlers.listIntelligence({});
+  assert.deepEqual(first.scores, [{ providerID: 'claude-agent', id: 'sonnet', index: 54.5, matched: 'anthropic/claude-sonnet-5.5' }, { providerID: 'ollama-cloud', id: 'glm-5.3', index: 61, matched: 'z-ai/glm-5.3' }]);
+  assert.deepEqual([first.directory, first.fetchedAt, first.note, fetched], ['/repo', '2026-11-18T08:00:00.000Z', null, 1]);
+  assert.match(first.source, /Artificial Analysis/);
+  assert.deepEqual(fits(RelayRpc.methods.listIntelligence.output, first), []);
+  now += 23 * 3600_000;
+  await handlers.listIntelligence({});
+  assert.equal(fetched, 1, 'a copy under a day old is used as it is');
+  now += 2 * 3600_000; reply = () => new Response('busy', { status: 503 });
+  const stale = await handlers.listIntelligence({});
+  assert.deepEqual([fetched, stale.scores.length, stale.fetchedAt, stale.note], [2, 2, '2026-11-18T08:00:00.000Z', 'could not refresh the index: OpenRouter answered 503']);
+  records.clear();
+  const none = await handlers.listIntelligence({});
+  assert.deepEqual([none.scores, none.fetchedAt, none.note], [[], null, 'could not load the index: OpenRouter answered 503']);
+  assert.deepEqual(fits(RelayRpc.methods.listIntelligence.output, none), []);
+});

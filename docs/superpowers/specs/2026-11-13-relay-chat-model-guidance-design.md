@@ -278,6 +278,8 @@ How it works. The probes of 16 Nov (`docs/compatibility.md`) showed each host st
 
 Starts only after the owner answers question 3.
 
+**Built on 18 Nov 2026, at the owner's word** ("the model list have intelligence index missing how to add from artifiical analysis"). The source is as planned: OpenRouter's public list, which carries Artificial Analysis's index. The join is simpler: by model id or name in one form, without models.dev, which would add only a few matches for a 6.7 MB download (see `docs/data-sources.md`). The index is kept in plugin storage for a day. The steps below are the first plan.
+
 1. `docs/data-sources.md`: add the source before any code: what it is, that its reuse terms are not confirmed, that the index version is not stated, and that release stays blocked.
 2. Guard the snapshot in `src/prices.ts`: refuse to replace a cached copy unless at least half of the new entries carry a usable price. Red then green.
 3. Read `intelligence_index` from the same OpenRouter reply. Download `https://models.dev/api.json` with its own size limit (12 MB), and keep only, for the connected providers, each model's `canonical_model_id` and whether a price is listed.

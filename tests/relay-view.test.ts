@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cheapestFirst, checksLine, contextLabel, decisionLine, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
+import { cheapestFirst, checksLine, contextLabel, decisionLine, indexLabel, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
 import { buildDecisionRequest, MAX_CHARS, MAX_FILE_NAMES } from '../src/decider.js';
 
 const chat = { kind: 'chat' as const, mode: 'execute' as const, model: 'p/exec#high' as string | null, confidence: 0.98 as number | null, fit: null as number | null, ms: 150, note: null as string | null };
@@ -97,9 +97,9 @@ test("the model to put in Desktop's picker after Relay switched a chat, and none
   for (const odd of ['noslash', '/m', 'p/', 'p/#high', 'p/m#']) assert.equal(pickerModel({ ...chat, model: odd }), null, odd);
 });
 
-test('a context window reads the way people say it, and one that is not listed says so', () => {
+test('a context window reads the way people say it, and one that is not listed is a dash, like a missing index', () => {
   assert.deepEqual([0, -1, Number.NaN, 512, 8192, 32768, 131072, 200000, 999_499, 999_500, 1_000_000, 1_048_576, 1_500_000, 2_000_000].map(contextLabel),
-    ['not listed', 'not listed', 'not listed', '512', '8K', '33K', '131K', '200K', '999K', '1M', '1M', '1M', '1.5M', '2M']);
+    ['—', '—', '—', '512', '8K', '33K', '131K', '200K', '999K', '1M', '1M', '1M', '1.5M', '2M']);
 });
 
 test('a price in the model table is short, and still never called free', () => {
@@ -135,4 +135,11 @@ test('Add puts in the default effort first, then each effort not in the list yet
   assert.equal(nextEffort([pick(null), pick('low'), pick('high')], model), undefined);
   assert.equal(nextEffort([{ providerID: 'other', id: 'acme-large', variant: null }], model), null, 'the same id from another provider is another model');
   assert.equal(nextEffort([pick(null)], { ...model, variants: [] }), undefined);
+});
+
+test('the table can be ordered by the intelligence index, highest first, with models that have none last', () => {
+  const model = (name: string, index: number | null) => ({ providerID: 'p', id: name.toLowerCase(), name, cost: { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, tiered: false }, limit: { context: 0, output: 0 }, index });
+  const rows = modelRows([model('Low', 20.5), model('None', null), model('High', 61), model('Also', 20.5)], { query: '', provider: '', order: 'index' });
+  assert.deepEqual(rows.map(row => row.name), ['High', 'Also', 'Low', 'None']);
+  assert.deepEqual([indexLabel(54.5), indexLabel(61), indexLabel(33.44), indexLabel(null), indexLabel(undefined)], ['54.5', '61', '33.4', '—', '—']);
 });

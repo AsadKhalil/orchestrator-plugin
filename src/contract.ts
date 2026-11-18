@@ -46,5 +46,10 @@ export const RelayRpc = Rpc.define({
     /** What Relay would do with a sample message: the mode after the 0.6 rule, the model it would pick, and the note. Nothing is switched, sent or recorded. */
     testDecider: { errors, input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false }, output: { type: 'object', properties: { directory: { type: 'string' }, mode: nullableMode, confidence: nullableNumber, model: nullableString, fit: nullableNumber, ms: { type: 'number' }, costUsd: nullableString, note: nullableString }, required: ['directory', 'mode', 'confidence', 'model', 'fit', 'ms', 'costUsd', 'note'], additionalProperties: false } },
     listModels: { errors, input: nothing, output: { type: 'object', properties: { directory: { type: 'string' }, models: { type: 'array', items: modelItem } }, required: ['directory', 'models'], additionalProperties: false } },
+    /** The intelligence index of each listed model that could be matched, with where it came from, when it was fetched, and why it may be old or missing. */
+    listIntelligence: { errors, input: nothing, output: { type: 'object', properties: {
+      directory: { type: 'string' }, source: { type: 'string' }, fetchedAt: nullableString, note: nullableString,
+      scores: { type: 'array', items: { type: 'object', properties: { providerID: { type: 'string' }, id: { type: 'string' }, index: { type: 'number' }, matched: { type: 'string' } }, required: ['providerID', 'id', 'index', 'matched'], additionalProperties: false } },
+    }, required: ['directory', 'source', 'fetchedAt', 'note', 'scores'], additionalProperties: false } },
   },
 });

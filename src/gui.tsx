@@ -5,7 +5,7 @@ import { offered, type ModelChoice } from './settings.js';
 import type { ListedModel } from './inventory.js';
 import { USE_FOR_MAX, type Decision, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
 import { describeError, modeLabel, reviewRules } from './router.js';
-import { checksLine, contextLabel, decisionLine, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine, type TableOrder } from './relay-view.js';
+import { checksLine, contextLabel, decisionLine, indexLabel, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine, type TableOrder } from './relay-view.js';
 import { panelCss } from './gui-styles.js';
 
 type Model = ListedModel;
@@ -24,7 +24,8 @@ const Acc = (props: { title: string; sub?: string; children: JSX.Element }) => {
  * The table a model is picked from: a search box, a provider filter and an order, then one row per model with its price per 1M tokens and
  * its context size. Each table keeps its own search, filter and order, and starts afresh when it is opened again.
  */
-const ModelTable = (props: { label: string; models: Model[]; action: string; actionLabel: (model: Model) => string; can: (model: Model) => boolean; mark: (model: Model) => string; tip?: (model: Model) => string | undefined; pick: (model: Model) => void; close: () => void }) => {
+type Rated = Model & { index: number | null; matched: string | null };
+const ModelTable = (props: { label: string; models: Rated[]; source: string; action: string; actionLabel: (model: Rated) => string; can: (model: Rated) => boolean; mark: (model: Rated) => string; tip?: (model: Rated) => string | undefined; pick: (model: Rated) => void; close: () => void }) => {
   const [query, setQuery] = createSignal('');
   const [provider, setProvider] = createSignal('');
   const [order, setOrder] = createSignal<TableOrder>('provider');
@@ -45,20 +46,23 @@ const ModelTable = (props: { label: string; models: Model[]; action: string; act
         <option value="provider" selected={order() === 'provider'}>By provider</option>
         <option value="price" selected={order() === 'price'}>Cheapest first</option>
         <option value="context" selected={order() === 'context'}>Largest context</option>
+        <option value="index" selected={order() === 'index'}>Highest index</option>
       </select>
     </div>
     <div class="rl-table-wrap">
       <table class="rl-table">
-        <thead><tr><th scope="col">Model</th><th scope="col">Price per 1M<small>in / out</small></th><th scope="col">Context</th><th scope="col"><span class="rl-sr">{props.action}</span></th></tr></thead>
+        <thead><tr><th scope="col">Model</th><th scope="col">Price per 1M<small>in / out</small></th><th scope="col">Context</th><th scope="col" title="Artificial Analysis Intelligence Index">Index</th><th scope="col"><span class="rl-sr">{props.action}</span></th></tr></thead>
         <tbody><For each={rows()}>{model => <tr>
           <td><span class="rl-t-name">{model.name}</span><small>{model.providerID}{props.mark(model)}</small></td>
           <td>{priceCell(model.cost)}</td>
-          <td>{contextLabel(model.limit.context)}</td>
+          <td title={model.limit.context > 0 ? undefined : 'Context size not listed'}>{contextLabel(model.limit.context)}</td>
+          <td title={model.matched ? `Artificial Analysis, for ${model.matched} on OpenRouter` : 'No index found for this model'}>{indexLabel(model.index)}</td>
           <td><button type="button" class="rl-btn sm" disabled={!props.can(model)} title={props.tip?.(model)} aria-label={props.actionLabel(model)} onClick={() => props.pick(model)}>{props.action}</button></td>
         </tr>}</For></tbody>
       </table>
     </div>
     <span class="rl-hint" aria-live="polite">{rows().length ? `${rows().length} of ${props.models.length} models` : 'No model matches. Try fewer words, or All providers.'}</span>
+    <span class="rl-hint">{props.source}</span>
   </div>;
 };
 
@@ -91,6 +95,23 @@ export default Plugin.define({
         });
         const data = createMemo(() => response()?.session === props.session ? response() : undefined);
         const result = createMemo(() => data()?.models);
+        // The intelligence index, asked for apart from the models, so a slow or failed fetch never holds the lists up. It never throws.
+        type Score = { providerID: string; id: string; index: number; matched: string };
+        const [intel] = createResource(() => props.session, async session => {
+          try {
+            const value = await call<{ source: string; note: string | null; scores: Score[] }>(session, ({ rpc, options }) => rpc.listIntelligence({}, options));
+            return { session, source: value.source, note: value.note, byModel: new Map(value.scores.map(score => [`${score.providerID}/${score.id}`, score])) };
+          } catch (error) { return { session, source: null, note: describeError(error, 'the index could not be loaded'), byModel: new Map<string, Score>() }; }
+        });
+        const scores = createMemo(() => { const value = intel(); return value?.session === props.session ? value : undefined; });
+        const rated = (model: Model) => { const score = scores()?.byModel.get(`${model.providerID}/${model.id}`); return { ...model, index: score?.index ?? null, matched: score?.matched ?? null }; };
+        const indexText = (model: Model) => { const index = rated(model).index; return index === null ? '' : ` · index ${indexLabel(index)}`; };
+        const indexSource = () => {
+          const value = scores();
+          if (!value) return 'Index: loading…';
+          if (!value.source) return `Index: not shown (${value.note}).`;
+          return `Index: ${value.source}. For the model in general, not your effort setting.${value.note ? ` (${value.note})` : ''}`;
+        };
         // Recent choices, asked for again every 5 seconds while the panel is open, so a /relay sent meanwhile shows up without a Refresh.
         const [recent, setRecent] = createSignal<{ session: Session; decisions: Decision[] }>();
         const loadRecent = async () => {
@@ -136,8 +157,8 @@ export default Plugin.define({
         };
         /** The same test the router uses, so a chip says "unavailable" exactly when /relay would pass the model over. */
         const unavailable = (choice: ModelChoice) => { const models = result(); return models !== undefined && !offered(models, choice); };
-        const usable = createMemo(() => (result() ?? []).filter(model => model.enabled && model.status !== 'deprecated'));
-        const deciders = createMemo(() => (data()?.relay.deciders ?? []).filter(model => model.enabled && model.status !== 'deprecated'));
+        const usable = createMemo(() => (result() ?? []).filter(model => model.enabled && model.status !== 'deprecated').map(rated));
+        const deciders = createMemo(() => (data()?.relay.deciders ?? []).filter(model => model.enabled && model.status !== 'deprecated').map(rated));
         /** The saved decider as the host offers it now; undefined when it is not offered, and the chip then says so. */
         const deciderModel = createMemo(() => { const relay = data()?.relay, saved = relay?.settings.decider; return relay && saved ? offered(relay.deciders, saved) : undefined; });
         const isDecider = (model: Model) => { const saved = data()?.relay.settings.decider; return !!saved && saved.providerID === model.providerID && saved.id === model.id; };
@@ -174,7 +195,7 @@ export default Plugin.define({
                         <For each={model().variants}>{variant => <option value={variant} selected={choice.variant === variant} disabled={choice.variant !== variant && taken(mode, choice, variant)}>{variant} effort</option>}</For>
                       </select>
                     </Show>
-                    <span class="rl-hint">{priceLabel(model().cost)}</span>
+                    <span class="rl-hint">{priceLabel(model().cost)}{indexText(model())}</span>
                   </div>}</Show>
                   <input class="rl-in" type="text" maxlength={USE_FOR_MAX} aria-label={`What ${choice.id} is for in ${modeLabel(mode)}`} placeholder="Use it for… (your own words, optional)" value={choice.useFor} disabled={saving()}
                     onChange={event => { const useFor = event.currentTarget.value.replace(/\s+/g, ' ').trim(); if (useFor !== choice.useFor) setList(mode, chosen(mode).map(item => same(item, choice) ? { ...item, useFor } : item)); }} />
@@ -182,7 +203,7 @@ export default Plugin.define({
                 <Show when={!chosen(mode).length}><span class="rl-hint">None chosen yet. /relay leaves the chat as it is for {modeLabel(mode)}.</span></Show>
                 <Show when={chosen(mode).length > 1}><span class="rl-hint">Several models: the decider picks the one whose line fits your message. When no line fits clearly, the chat keeps its model if it is in this list; otherwise the first is used. With no lines written, the first is always used.</span></Show>
                 <Show when={adding() === mode} fallback={<button type="button" class="rl-btn sm rl-add" disabled={saving() || response.loading} onClick={() => setAdding(mode)}>+ Add a model</button>}>
-                  <ModelTable label={`Add a model to ${modeLabel(mode)}`} models={usable()} action="Add" actionLabel={model => `Add ${model.name} from ${model.providerID} to ${modeLabel(mode)}`}
+                  <ModelTable label={`Add a model to ${modeLabel(mode)}`} models={usable()} source={indexSource()} action="Add" actionLabel={model => `Add ${model.name} from ${model.providerID} to ${modeLabel(mode)}`}
                     can={model => !saving() && nextEffort(chosen(mode), model) !== undefined} mark={model => `${model.capabilities.tools ? '' : ' · no tools'}${inList(mode, model) ? ' · ✓ in the list' : ''}`}
                     tip={model => inList(mode, model) ? 'Adds it once more, with another effort' : undefined} pick={model => addModel(mode, model)} close={() => setAdding(null)} />
                 </Show>
@@ -202,11 +223,11 @@ export default Plugin.define({
                         <For each={model().variants}>{variant => <option value={variant} selected={decider().variant === variant}>{variant} effort</option>}</For>
                       </select>
                     </Show>
-                    <span class="rl-hint">{priceLabel(model().cost)}</span>
+                    <span class="rl-hint">{priceLabel(model().cost)}{indexText(model())}</span>
                   </div>}</Show>
                 </div>}</Show>
                 <Show when={adding() === 'decider'} fallback={<button type="button" class="rl-btn sm rl-add" disabled={saving() || response.loading} onClick={() => setAdding('decider')}>{data()?.relay.settings.decider ? 'Change the decider' : '+ Choose a decider'}</button>}>
-                  <ModelTable label="Choose a decider" models={deciders()} action="Use" actionLabel={model => `Use ${model.name} from ${model.providerID} as the decider`}
+                  <ModelTable label="Choose a decider" models={deciders()} source={indexSource()} action="Use" actionLabel={model => `Use ${model.name} from ${model.providerID} as the decider`}
                     can={model => !saving() && !isDecider(model)} mark={model => isDecider(model) ? ' · ✓ in use' : ''}
                     pick={model => { setAdding(null); void saveRelay({ decider: { providerID: model.providerID, id: model.id, variant: null } }); }} close={() => setAdding(null)} />
                 </Show>

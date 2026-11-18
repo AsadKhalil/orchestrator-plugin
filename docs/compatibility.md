@@ -757,3 +757,26 @@ At 09:34 on 17 Nov the two rebuilt files from the entry above were copied into t
 - That copy loads in a throwaway OpenCode: Relay was listed after 10 s and answered `getRelay`. Desktop needs a restart from the owner to start a new server.
 
 **Not yet seen:** the owner's Desktop on the fixed copy, and whether the freezes stop.
+
+## 2026-11-18 — The intelligence index (Windows 11, OpenCode 2.3.0 CLI)
+
+The owner said: "the model list have intelligence index missing how to add from artifiical analysis".
+
+**The source, checked that day.** OpenRouter's public model list had 478 models, and 267 of them carried `benchmarks.artificial_analysis.intelligence_index`, for example Claude Sonnet 5.5 54.5, Haiku 5.5 36.5 and Opus 5.5 59.1.
+
+**How many match.** Measured against models.dev's lists, matching by id or name in one form gave 15 of 27 Ollama Cloud models and 8 of 18 Anthropic models. Joining on models.dev's `canonical_model_id` gave 17 of 27, which was not worth its 6.7 MB download. OpenCode's model records carry `family` and `modelID` but no shared id.
+
+**Real host.** A throwaway OpenCode 2.3.0 with no login loaded Relay from this repository and answered `listIntelligence`:
+
+- It fetched OpenRouter's list and matched 4 of the 11 free models it listed, for example `opencode/inkling-2-small-free` at 30.6, matched to `thinkingmachines/inkling-2-small`.
+- A second call used the stored copy: the same fetch time, in 16 ms.
+
+**The panel.** Checked in the plain page with made-up scores:
+
+- The table showed Model, Price, Context, Index and Add, and nothing overflowed its cell at the panel's width.
+- "Highest index" put the models with the highest index first and those without one last.
+- The tooltip named the matched OpenRouter model.
+- A chosen model's line read "price not listed · index 54.5".
+- The decider's table showed the index too.
+
+**Not tested:** the index in the owner's Desktop, which runs the fixed copy from `feac56b` until it is updated.

@@ -31,20 +31,24 @@ export function priceCell(cost: Pick<ModelCostView, 'inputPerMillion' | 'outputP
   return `${usd(input)} / ${usd(output)}${cost.tiered ? ' (base tier)' : ''}`;
 }
 
-/** A context window the way people say it: 8K, 200K, 1M. Zero means the catalog does not list it. */
+/** A context window the way people say it: 8K, 200K, 1M. Zero means the catalog does not list it, shown as a dash (the cell says why). */
 export function contextLabel(tokens: number): string {
-  if (!(tokens > 0)) return 'not listed';
+  if (!(tokens > 0)) return '—';
   if (tokens < 1000) return String(tokens);
   const thousands = Math.round(tokens / 1000);
   return thousands < 1000 ? `${thousands}K` : `${+(tokens / 1_000_000).toFixed(1)}M`;
 }
 
-type TableModel = { providerID: string; id: string; name: string; cost: Pick<ModelCostView, 'inputPerMillion' | 'outputPerMillion'>; limit: { context: number } };
-export type TableOrder = 'provider' | 'price' | 'context';
+/** An intelligence index as the table shows it: one decimal at most, and a dash when no index was found for the model. */
+export const indexLabel = (index: number | null | undefined) => index === null || index === undefined ? '—' : String(Math.round(index * 10) / 10);
+
+type TableModel = { providerID: string; id: string; name: string; cost: Pick<ModelCostView, 'inputPerMillion' | 'outputPerMillion'>; limit: { context: number }; index?: number | null };
+export type TableOrder = 'provider' | 'price' | 'context' | 'index';
 const orders: Record<TableOrder, (a: TableModel, b: TableModel) => number> = {
   provider: (a, b) => a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name),
   price: cheapestFirst,
   context: (a, b) => b.limit.context - a.limit.context || a.name.localeCompare(b.name),
+  index: (a, b) => (b.index ?? -1) - (a.index ?? -1) || a.name.localeCompare(b.name),
 };
 /** The rows of the "Add a model" table: models with every typed word in their provider, id or name, of one provider when one is chosen, in the order chosen. */
 export function modelRows<M extends TableModel>(models: readonly M[], view: { query: string; provider: string; order: TableOrder }): M[] {

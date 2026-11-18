@@ -5,15 +5,29 @@ import { listProjectModels } from './inventory.js';
 import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, chatSwitch, setChatSwitch, type RelaySettings, type RelayStore } from './relay-store.js';
 import { checksStatus, describeError, linesFor, route } from './router.js';
 import { decide } from './decider.js';
+import { INDEX_SOURCE, indexFor, loadIndexTable } from './intelligence.js';
 
 const chatID = (input: unknown) => { const id = (input as { sessionID: string }).sessionID.trim(); if (!id) throw new Error('Name the chat'); return id; };
 
 /** The panel's and the pill's calls. Relay's settings are one set for every project; only the model lists come from this project's host. */
-export function registerRpc(context: Pick<Plugin.Context, 'rpc' | 'location' | 'model' | 'storage' | 'experimental'>) {
+export function registerRpc(context: Pick<Plugin.Context, 'rpc' | 'location' | 'model' | 'storage' | 'experimental'>, options: { fetcher?: typeof fetch; now?: () => number } = {}) {
   const relayStore = context.storage as unknown as RelayStore;
+  // One fetch of the index at a time, shared by the calls that arrive while it runs.
+  let indexLoad: ReturnType<typeof loadIndexTable> | undefined;
+  const indexTable = () => indexLoad ??= loadIndexTable(context.storage as never, options.fetcher ?? fetch, (options.now ?? Date.now)()).finally(() => { indexLoad = undefined; });
   const relayView = async (settings: RelaySettings, chat: Awaited<ReturnType<typeof listProjectModels>>, deciders: Awaited<ReturnType<typeof listProjectModels>>) => ({ directory: context.location.directory, settings, decisions: await recentDecisions(relayStore), deciders, checks: checksStatus(settings, chat) });
   return context.rpc.register(RelayRpc, guarded({
     listModels: async () => ({ directory: context.location.directory, models: await listProjectModels(context) }),
+    listIntelligence: async () => {
+      const [found, chat, deciders] = await Promise.all([indexTable(), listProjectModels(context), listProjectModels(context, 'decision')]);
+      const seen = new Set<string>();
+      const scores = [...chat, ...deciders].flatMap(model => {
+        const key = `${model.providerID}/${model.id}`, hit = seen.has(key) ? null : indexFor(model, found.table);
+        seen.add(key);
+        return hit ? [{ providerID: model.providerID, id: model.id, index: hit.index, matched: hit.matched }] : [];
+      });
+      return { directory: context.location.directory, source: INDEX_SOURCE, fetchedAt: found.fetchedAt, note: found.note, scores };
+    },
     getRelay: async () => {
       const [settings, chat, deciders] = await Promise.all([getRelaySettings(relayStore), listProjectModels(context), listProjectModels(context, 'decision')]);
       return relayView(settings, chat, deciders);
