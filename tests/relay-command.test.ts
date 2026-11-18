@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { relayCommand, isPicture, fileSize, localPath } from '../src/relay-command.js';
 import { chatSwitch, recentDecisions } from '../src/relay-store.js';
 import { reviewRules } from '../src/router.js';
-import { entry, fakeRelay } from './relay-fakes.js';
+import { entry, fakeModels, fakeRelay } from './relay-fakes.js';
 
 const typed = { text: 'fix the login test', files: [{ uri: 'file:///repo/a.txt', name: 'a.txt', mention: { start: 22, end: 28, text: '@a.txt' } }], agents: [], skills: [] };
 type Fake = ReturnType<typeof fakeRelay>;
@@ -189,7 +189,8 @@ test("the decider gets the text, whether the chat's agent can change files, and 
   assert.equal(/file:\/\/|\/repo|@a\.txt|\busual\b|\bexec\b|#high/.test(request), false, 'no address, no folder, no model name');
   assert.deepEqual(input(f, 'decisions').questions.map((question: { name: string }) => question.name), ['mode'], 'one model in each mode: nothing to choose');
   const record = await last(f);
-  assert.deepEqual(Object.keys(record).sort(), ['at', 'confidence', 'costUsd', 'fit', 'kind', 'mode', 'model', 'ms', 'note', 'sessionID']);
+  assert.deepEqual(Object.keys(record).sort(), ['at', 'confidence', 'costUsd', 'fit', 'kind', 'messageID', 'mode', 'model', 'ms', 'note', 'reply', 'sessionID']);
+  assert.deepEqual([record.messageID, record.reply], ['msg-sent', null], 'the id of the message that was sent, so that what its reply took can be read later');
   assert.deepEqual([record.kind, record.sessionID, record.mode, record.model, record.confidence, record.fit, record.costUsd, record.note], ['chat', 'ses-1', 'execute', 'p/exec#high', 0.98, null, '0', null]);
   assert.equal(/login|a\.txt/.test(JSON.stringify(record)), false);
 });
@@ -247,4 +248,52 @@ test('only a file on this machine is sized: an address that names another machin
     for (const uri of ['file://server/share/a.txt', 'https://example.test/a.txt', 'data:text/plain,hi', 'not an address', '']) { assert.equal(localPath(uri), null, uri); assert.equal(await fileSize(uri), null, uri); }
     await assert.rejects(fileSize(pathToFileURL(join(folder, 'missing.txt')).href));
   } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+// Stay or go, and the whole chat must fit. `p/usual` and `p/exec` get the prices of the worked example in the cost report (section 4.2): $4 / $20 and $2 / $10.
+const cost = (input: string, output: string, read: string, write: string) => ({ inputPerMillion: input, outputPerMillion: output, cacheReadPerMillion: read, cacheWritePerMillion: write, tiered: false, steps: [] });
+const pricedModels = fakeModels.map(model => model.id === 'usual' ? { ...model, cost: cost('4', '20', '0.2', '5') } : model.id === 'exec' ? { ...model, cost: cost('2', '10', '0.1', '2.5') } : model);
+/** A chat whose one answer, from p/usual a minute ago, read and wrote `tokens` in all. */
+const chatOf = (tokens: number) => [{ id: 'u1', type: 'user', time: { created: Date.now() - 65_000 } }, { id: 'a1', type: 'assistant', time: { created: Date.now() - 64_000, completed: Date.now() - 60_000 }, model: { providerID: 'p', id: 'usual', variant: 'default' }, tokens: { input: 1000, output: 500, reasoning: 0, cache: { read: tokens - 1500, write: 0 } } }];
+const stepDown = { settings: execute(entry('usual', null, 'large changes across many files'), entry('exec', 'high', 'small, clear changes')), models: pricedModels, decision: { choice: 'execute', confidence: 0.9, lines: { execute: { choice: '2', confidence: 0.8 } } } };
+
+test("a step down that does not pay leaves the chat on its model for this message; the agent still changes and the message is sent once", async () => {
+  const f = fakeRelay({ ...stepDown, messages: chatOf(60_000) }); await run(f);
+  assert.deepEqual(switches(f), ['switchAgent', 'remove'], 'no model switch');
+  assert.deepEqual(prompts(f), sent);
+  const record = await last(f);
+  assert.deepEqual([record.mode, record.model, record.fit, record.note], ['execute', 'p/usual', null, "moving this chat to p/exec#high would cost about $0.14 to read it again and save about $0.09 over 6 requests, so the chat's model stays"]);
+  assert.deepEqual(input(f, 'context'), { sessionID: 'ses-1' });
+  assert.equal(names(f).filter(name => name === 'decisions').length, 1, 'the check is arithmetic: no second model request');
+});
+
+test('a step down that pays is made, and the usual number of requests comes from the records', async () => {
+  const short = fakeRelay({ ...stepDown, messages: chatOf(10_000) }); await run(short);
+  assert.deepEqual(switches(short), ['switchAgent', 'switchModel', 'remove']);
+  assert.deepEqual([(await last(short)).model, (await last(short)).note], ['p/exec#high', null]);
+  const took = (requests: number) => ({ at: 'earlier', sessionID: 'ses-0', kind: 'chat', mode: 'execute', confidence: 0.9, fit: 0.8, model: 'p/exec#high', ms: 100, costUsd: '0', note: null, messageID: 'm', reply: { requests, fresh: 0, cached: 0, costUsd: null, seconds: null } });
+  const busy = fakeRelay({ ...stepDown, messages: chatOf(36_000) }); busy.data.set('relay/decisions', [took(18), took(30), took(4)]); await run(busy);
+  assert.deepEqual([(await last(busy)).model, (await last(busy)).note], ['p/exec#high', null], '18 requests pay where 6 would not');
+  const quiet = fakeRelay({ ...stepDown, messages: chatOf(36_000) }); await run(quiet);
+  assert.equal((await last(quiet)).model, 'p/usual');
+});
+
+test('a chat is not moved to a model it does not fit', async () => {
+  const settings = execute(entry('small', null, 'tiny edits'), entry('exec', 'high', 'everything else'));
+  const f = fakeRelay({ settings, messages: chatOf(5000) }); await run(f);
+  assert.deepEqual(input(f, 'decisions').questions.map((question: { name: string }) => question.name), ['mode'], 'one model is left, so no line is asked about');
+  assert.deepEqual(input(f, 'switchModel').model, { providerID: 'p', id: 'exec', variant: 'high' });
+  const none = fakeRelay({ settings: execute(entry('small')), messages: chatOf(5000) }); await run(none);
+  assert.deepEqual(switches(none), []);
+  assert.deepEqual(prompts(none), sent, 'the message still goes out once, unchanged');
+  assert.deepEqual([(await last(none)).model, (await last(none)).note], [null, 'this chat is too long for every chosen Execute model']);
+});
+
+test("when the chat's messages cannot be read, or take too long, the line is followed and the note says the cost was not checked", async () => {
+  for (const [label, options] of [['fails', { fail: { context: new Error('no such chat') } }], ['never answers', { messages: 'never', readMs: 80 }]] as const) {
+    const f = fakeRelay({ ...stepDown, ...options }); await run(f);
+    assert.deepEqual(switches(f), ['switchAgent', 'switchModel', 'remove'], label);
+    assert.deepEqual([(await last(f)).model, (await last(f)).note], ['p/exec#high', "the chat's size could not be read, so no cost check"], label);
+    assert.deepEqual(prompts(f), sent, label);
+  }
 });

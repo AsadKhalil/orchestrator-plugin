@@ -780,3 +780,76 @@ The owner said: "the model list have intelligence index missing how to add from 
 - The decider's table showed the index too.
 
 **Not tested:** the index in the owner's Desktop, which runs the fixed copy from `feac56b` until it is updated.
+
+## 2026-11-18 — What a reply took, the whole chat's fit, and stay or go (Windows 11, OpenCode 2.3.0 CLI, mock models and a mock decider)
+
+The owner said: "can you test this for me 1. Record what each switch cost (tokens re-read, cost, seconds) in Recent choices. About a day. 2. Say in the README when Relay saves. In long chats use /relay at clear points, ask for checks through a helper, and try one model at two efforts first. No code. 3. Add a "stay or go" check after the decider. A step down happens only when it pays, and the whole chat must fit the model. Two to three days, after the first paid test stage."
+
+Everything below ran on isolated OpenCode servers started from the Desktop's bundled CLI (it prints `opencode v2.3.0`; platform win32): scratch config, data, cache and state folders, a throwaway password, loopback ports, a synthetic key and a mock provider. No real model, key or profile was used, and nothing was paid. The paid stages of the cost report's test (its stages 1 and 2) were not run: they need the owner's yes. The report is `docs/research/2026-11-17-relay-cost-and-model-choice.md`.
+
+**What a change does to the request (stage 0 of the report's test; no plugin loaded).** One chat, thirteen messages, one change before some of them. The mock kept every request whole. The system text was 28,970 characters and there were 13 tools in every request.
+
+| Change before the message | System text | Tools | Earlier messages | What was added |
+|---|---|---|---|---|
+| none | same | same | all kept | the last answer and the new message |
+| agent to `plan` | same | same | all kept | one user message: `<system-reminder> You are in Plan mode. …` |
+| agent back to `build` | same | same | all kept | one user message: `<system-reminder> You are NO LONGER in Plan mode. …` |
+| review rules put | same | same | all kept | one user message: `<system-update> <context key="relay-review-rules"> …` |
+| review rules removed | same | same | all kept | one user message: `<system-update> The context under "relay-review-rules" no longer applies. …` |
+| model to a second mock model | changed | same | all 21 kept | nothing else |
+| model back to the first | as before the switch | same | all 23 kept | nothing else |
+| effort to `high`, then back to the default | same | same | all kept | only `reasoning_effort` in the request |
+
+The system text of two models differs only in the two lines under "# Your Model" that give the model's name and id, at character 1,499 of 28,970; after the switch back it was the same text as before. So of these changes only a change of model alters the start of the request. The mock speaks the OpenAI format: this shows the text of each request, not what a provider's cache does with it.
+
+**What OpenCode keeps for each reply.**
+
+- `session.prompt` returns the new message's entry, and its `id` is the id of the `user` message in `session.context` (11 of 11 messages).
+- `session.context` gave every message of the chat, 41 entries for 11 messages: `user`, `assistant`, `idle`, `agent-switched`, `synthetic`, `system`, `model-switched`, and `compaction` with a `status`.
+- An `assistant` entry carries `time` (`created`, `firstToken`, `streamed`, `completed`), `model`, `agent`, `tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`), `cost` and `finish`. `tokens.input` leaves out the tokens the provider reported as cached: a request of 11,344 tokens with 5,672 cached was kept as input 5,672 and cache read 5,672.
+- The host works out `cost` from the model's listed price: 20,000 tokens read, 15,000 of them from a cache, and 5 written, at $2, $0.10 and $10 for a million, gave 0.01155.
+- A reply in which the model first called a tool was kept as two `assistant` entries, one for each request.
+- A custom model's `cost` in the config can be one entry, or a list with `tier: { type: 'context', size }`; the model list then gives them back as written.
+
+**A mock can be a decision model.** Earlier sections say that none can. A model with `type: 'decision'` and `package: '@opencode/ai/providers/openai-compatible/decisions'` is listed as a decision model, and `experimental.generate.decisions` then sends `POST <baseURL>/systemone` with `{ state, questions: { <name>: { type: 'choice', instructions, criteria } }, model }` and reads `{ model, answers: { <name>: { type: 'choice', choice, probabilities, confidence } }, usage: { input_tokens, output_tokens, cost } }`. With the packages `@opencode/ai/providers/openai-compatible` and `@opencode/ai/providers/openai` the host answered "has no decision API opencode can call". The smoke now has such a mock, so it makes a real switch for the first time.
+
+**The packed plugin (`npm run smoke:host:model`), passed on Windows, twice; the second run was on the final build.** In this order:
+
+- With no decider, `/relay` sent one message, and its record got what the reply took: 1 request, 10 tokens read new, none from a cache, a cost of 0 (the model lists no price), and the first word after 180.8 s in the first run and 80.3 s in the second. That was the first reply of a fresh server; the later ones took 0.6 to 1.6 s.
+- The mock decision model was accepted as the decider. The model list gave the prices of `model-big` as 4, 20, 0.2 and 5 (input, output, cached read, cache write), with no steps.
+- In a new chat on `model-big`, the line of the cheaper model was followed: the chat went to `build` and `model-cheap`, and the record reads 5,000 tokens read new, 15,000 from cache, $0.01155.
+- The line of the dearer model was followed, a step up: 2,000 read new, 58,000 from cache, $0.0197.
+- With the chat at 60,005 tokens, the model of 40,000 tokens was no longer offered to the decider (it was asked about lines 1 and 2 only). The line of the cheaper model did not pay, so the chat stayed on `model-big` and went to no other model. The record says: "moving this chat to smoke/model-cheap would cost about $0.10 to read it again and save about $0.09 over 6 requests, so the chat's model stays".
+- With the switch on, a plain message was weighed the same way, and its record got its reply: 495 read new, 60,505 from cache.
+- A reply with one tool call was recorded as 2 requests.
+- Each message made exactly one decider request, and one model request (two for the reply with the tool call).
+
+The tokens are what the mock reported, and the costs are what the host worked out from the mock models' made-up prices.
+
+**A long chat (a throwaway probe with the packed plugin; not part of the smoke).** Relay reads the chat's entries before it decides, and again when the chat goes idle, and gives each read one second at most. One chat was grown with messages of about 20,000 characters each:
+
+| Chat | Entries | Size of `session.context` | That read over HTTP | `/relay`, from the call to its return |
+|---|---|---|---|---|
+| new, then one message | not counted | not measured | not timed | 127 ms, then 61 ms |
+| 60 long turns | 187 | 1.25 MB | 76 to 97 ms | 73 to 74 ms |
+| 200 long turns | 613 | 4.16 MB | 175 to 308 ms | 116 to 123 ms |
+
+At both sizes the line of the cheaper model got the stay note ("… would cost about $0.29 to read it again and save about $0.12 over 6 requests, so the chat's model stays" at 200 turns), which Relay can write only when it has read the chat in time, and each record got its reply. The second probe below was starting on the same machine during the 200-turn rows, so those times are upper figures.
+
+**A compaction (a second throwaway probe).**
+
+- OpenCode accepts a summary only when it uses the section headings of the template in its request ("## Objective", "## Requirements" and so on). A mock that answered with other text got a second request ("The previous response did not fill in the required summary template. …"), and then a `compaction` entry with `status: 'failed'` and the error "Compaction summary did not match the required template". The chat was as before, and Relay took its size from the last answer (31,005 tokens).
+- A mock that filled in the template got `status: 'completed'` after one request. The entry carries `reason: 'manual'`, the model, the summary, a cost and token counts of its own, and `time.created` only.
+- After that, `session.context` listed the chat from the compaction's own entry on: the three earlier messages and their answers were gone from it, and the next request carried the system text, the summary and the new message. So `session.context` holds what the chat has gathered since its last compaction, not its whole history.
+- Relay then takes the chat's size as nothing until the next answer (4,005 tokens after it). The first message after a compaction is placed like one in a new chat: no cost check and no fit limit.
+- A record whose message is compacted away before its reply is read keeps waiting until it leaves the list of 20. The chat is read once more each time it goes idle until then.
+
+**Not tested:**
+
+- Real models, real prices and a real cache: what a switch really costs (stage 1 of the report's test), and whether a provider's token fields fit what Relay reads, for example whether its `input` leaves out the tokens written to a cache.
+- The numbers in the cost check (a cache of five minutes, 1,500 tokens in and 500 out for a request, 6 requests, the margin of 1.5). They are guesses until a real run.
+- A real decider together with the new rules, and helpers. A helper's record names no message and gets no reply.
+- A compaction that OpenCode starts by itself in the middle of a reply.
+- The new line of Recent choices in Desktop. It was checked in tests only.
+- macOS and Linux. GitHub's checks run the longer smoke there on the next push.
+- The owner's Desktop, which runs the fixed copy from `feac56b`.

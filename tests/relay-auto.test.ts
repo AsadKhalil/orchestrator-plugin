@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BUSY_CHECK_MS, relayAutoHook } from '../src/relay-auto.js';
+import { BUSY_CHECK_MS, relayAutoHook, relayReplyHook } from '../src/relay-auto.js';
 import { recentDecisions } from '../src/relay-store.js';
 import { reviewRules } from '../src/router.js';
 import { fakeRelay } from './relay-fakes.js';
@@ -106,6 +106,53 @@ test('with the switch on, a picture Desktop uploaded counts as a picture, and it
     await relayAutoHook(f.deps)(event('do what the picture says', odd));
     assert.match(asked(f), /Attached files: none\. Attached pictures: 0\.$/, JSON.stringify(odd));
   }
+});
+
+// What the reply took. The messages are shaped as OpenCode 2.3.0 gives them (18 Nov); `msg-1` is the id the hook's event carries.
+const replied = (created: number) => [
+  { id: 'msg-1', type: 'user', time: { created }, text: 'never read' },
+  { id: 'a1', type: 'assistant', time: { created: created + 20, firstToken: created + 900, completed: created + 1500 }, model: { providerID: 'p', id: 'exec', variant: 'high' }, tokens: { input: 84_000, output: 300, reasoning: 0, cache: { read: 1200, write: 0 } }, cost: 0.21 },
+  { id: 'a2', type: 'assistant', time: { created: created + 1600, firstToken: created + 1700, completed: created + 2000 }, model: { providerID: 'p', id: 'exec', variant: 'high' }, tokens: { input: 400, output: 80, reasoning: 0, cache: { read: 85_500, write: 0 } }, cost: 0.01 },
+  { id: 'i1', type: 'idle', time: { created: created + 2010 } },
+];
+const sleep = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
+
+test("when a chat goes idle, what the reply to each placed message took is read from the chat's own record and kept; no model is asked", async () => {
+  const f = turnOn(fakeRelay({ messages: replied(1000) }));
+  await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);   // the record is written after the hook returns
+  assert.deepEqual([(await last(f)).messageID, (await last(f)).reply], ['msg-1', null], 'the record waits for its reply');
+  f.calls.length = 0;
+  await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
+  assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9 });
+  assert.deepEqual(names(f).filter(name => !name.startsWith('storage')), ['context'], 'one read of the chat, and nothing else');
+  f.calls.length = 0;
+  await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
+  assert.equal(names(f).includes('context'), false, 'nothing waits, so the chat is not read again');
+  await relayReplyHook(f.deps)({ sessionID: 'ses-2' });
+  assert.equal(names(f).includes('context'), false, 'a chat with no record is not read');
+});
+
+test('a reply that is not there yet leaves its record waiting for the next time the chat goes idle', async () => {
+  const messages: unknown[] = [];
+  const f = turnOn(fakeRelay({ messages }));
+  await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);
+  await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
+  assert.deepEqual([(await last(f)).messageID, (await last(f)).reply], ['msg-1', null]);
+  messages.push(...replied(1000));
+  await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
+  assert.equal((await last(f)).reply?.requests, 2);
+});
+
+test('the idle hook never throws and never holds a chat for long', async () => {
+  for (const [label, options] of [['the chat cannot be read', { fail: { context: new Error('no such chat') } }], ['the chat never answers', { messages: 'never' }], ['the record cannot be saved', { messages: replied(1000) }]] as const) {
+    const f = turnOn(fakeRelay({ ...options, readMs: 60 }));
+    await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);
+    if (label === 'the record cannot be saved') f.deps.store.set = async () => { throw new Error('disk full'); };
+    assert.equal(await settles(relayReplyHook(f.deps)({ sessionID: 'ses-1' }), 500), true, label);
+    assert.equal((await last(f)).reply, null, label);
+  }
+  const broken = fakeRelay({ fail: { storageGet: new Error('storage is down') } });
+  await assert.doesNotReject(relayReplyHook(broken.deps)({ sessionID: 'ses-1' }));
 });
 
 // Last on purpose: a write that never finishes holds Relay's storage queue for the rest of this file.

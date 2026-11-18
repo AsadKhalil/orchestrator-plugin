@@ -5,7 +5,7 @@ Relay (package `relay-opencode`) is an unfinished OpenCode 2.3.0 plugin (TypeScr
 ## Commands
 
 - `npm run typecheck` · `npm test` (node:test through tsx, `tests/*.test.ts`) · `npm run build` (clears `dist/`, then tsc, then the Vite GUI bundle) · `node scripts/check-package.mjs`. CI runs all four on Linux and Windows.
-- The real-host smoke needs a prior `npm run build` and `RELAY_SMOKE_CLI=<path to an opencode 2.3.0 binary>`: `npm run smoke:host:model`. It installs the packed plugin into an isolated server with scratch directories, loopback ports, a synthetic key and a mock model. CI runs it on Linux, macOS and Windows with the binary from `@opencode/cli-<os>-<arch>@2.3.0`.
+- The real-host smoke needs a prior `npm run build` and `RELAY_SMOKE_CLI=<path to an opencode 2.3.0 binary>`: `npm run smoke:host:model`. It installs the packed plugin into an isolated server with scratch directories, loopback ports, a synthetic key, mock models and a mock decision model. CI runs it on Linux, macOS and Windows with the binary from `@opencode/cli-<os>-<arch>@2.3.0`.
 - Run the four checks fresh before saying anything passes, and report the counts as printed.
 
 ## Never
@@ -20,6 +20,7 @@ Relay (package `relay-opencode`) is an unfinished OpenCode 2.3.0 plugin (TypeScr
 - Plan and Review put the chat on OpenCode's `plan` agent; only Execute uses `build`. Relay never changes the permission settings of OpenCode's agents.
 - An answer under 0.6 (`UNSURE_BELOW`): `/relay` moves the chat to Plan; with the switch on, the chat stays as it is.
 - Nothing about a chat is switched while it is working: `/relay` waits for it (up to two minutes), and the switch's hook checks for 300 ms and otherwise leaves it alone.
+- A move to a cheaper model of the same mode is made only when it pays (`stayOrGo` in `src/router.ts`), and a chat is never moved to a model it does not fit. Whichever model is used, the mode still sets the agent and the review rules. A step up is always made. The check, and the reading of what a reply took, ask no model.
 - Relay's only model requests are the decider's, and they are not reserved against any budget (the owner, 14 Nov 2026: "i dont want a budget feature please ignore it we see it later"). There is one for each `/relay`, one for each message in a chat with the switch on, one for each helper that a model starts, and one for each try in the panel's test box. Each is limited by its size instead (4,000 characters of text, eight "use it for" lines of 200 characters for a mode, ten file names), and only a decision model can be the decider.
 
 ## Gotchas
@@ -27,6 +28,8 @@ Relay (package `relay-opencode`) is an unfinished OpenCode 2.3.0 plugin (TypeScr
 - The host reports any error an RPC handler throws as "RPC call failed". `guarded()` in `src/rpc.ts` returns the declared `rejected` error instead, so every method in `src/contract.ts` must declare `errors`. A test enforces this.
 - Stock plugin storage (2.2.7 and 2.3.0) has no `compareAndSet`. Code must work without it and with it. `src/relay-store.ts` serializes its own reads and writes; without `compareAndSet`, a save from two OpenCode processes in the same instant can still lose one, and the revision check catches every other stale save.
 - The switch's `prompt` hook (`src/relay-auto.ts`) runs for every message in every chat, before the message goes out. It must never throw, because a throw fails the person's message, and everything it waits for is bounded. `/relay` marks its own send with `metadata: { relay: 'sent' }` so the hook skips it; keep that marker, or a `/relay` message in a chat with the switch on is decided twice.
+- The `experimental.idle` hook (`relayReplyHook` in `src/relay-auto.ts`) runs each time any chat finishes its work. It must never throw, and it holds the chat for one second at most. It reads what the reply to a recorded message took out of `session.context`. The record names its message by the id that `session.prompt` returned, or by the `prompt` hook's `messageID`.
+- A mock can be a decision model: `type: 'decision'`, the package `@opencode/ai/providers/openai-compatible/decisions`, and an answer to `POST /v1/systemone` (`scripts/smoke-host-model.mjs` has one). A plain chat model cannot be the decider.
 - The panel bundles `router.ts`, `decider.ts`, `relay-store.ts`, `relay-view.ts`, `settings.ts` and `costs.ts`. Nothing they import may come from `node:`.
 - Most files use CRLF line endings (`src/`, `tests/`, `scripts/`, `AGENTS.md`, most of `docs/`); `README.md` and `CONTRIBUTING.md` use LF. Keep each file's own endings. Check them with Node: in Git Bash, `grep -c` with a carriage return can print 0 for a CRLF file.
 - Tests must not touch a real data directory or profile. Nothing in `src/` opens a file of its own; keep it that way, or give it an explicit temp root in tests.

@@ -1,8 +1,9 @@
 import type { PromptInput } from '@opencode/schema/prompt-input';
 import type { Session } from '@opencode/schema/session';
 import { within } from './decider.js';
+import { replyOf } from './chat-facts.js';
 import { placeMessage, recordPlaced, timingOf, uploadsOf, type RelayDeps } from './relay-command.js';
-import { chatSwitch } from './relay-store.js';
+import { chatSwitch, saveReplies, waitingReplies } from './relay-store.js';
 
 // The switch. In a chat where `/relay on` (or the pill) turned it on, every message the person sends is placed the way `/relay` places one,
 // inside the host's `prompt` hook, before the message goes out (a switch made there serves that message: probe, 16 Nov). The host sends the
@@ -10,7 +11,7 @@ import { chatSwitch } from './relay-store.js';
 
 /** How long a chat may take to show it is idle before it counts as busy and is left as it is. */
 export const BUSY_CHECK_MS = 300;
-type PromptEvent = { readonly sessionID: string; readonly prompt?: PromptInput.Prompt; readonly metadata?: Record<string, unknown> };
+type PromptEvent = { readonly sessionID: string; readonly messageID?: string; readonly prompt?: PromptInput.Prompt; readonly metadata?: Record<string, unknown> };
 
 export function relayAutoHook(deps: RelayDeps) {
   const timing = { ...timingOf(deps), waitMs: BUSY_CHECK_MS };
@@ -27,8 +28,28 @@ export function relayAutoHook(deps: RelayDeps) {
       await within(async () => {
         const placed = await placeMessage(deps, timing, { sessionID, prompt, unsure: 'stay', uploads: uploadsOf(event.metadata) });
         // The record is for the panel; the message does not wait for it. recordPlaced never rejects.
-        void recordPlaced(deps, sessionID, placed);
+        void recordPlaced(deps, sessionID, placed, typeof event.messageID === 'string' ? event.messageID : null);
       }, timing.readMs * 3);
     } catch { /* never fail the person's message */ }
+  };
+}
+
+/**
+ * What a reply took. When a chat has finished its work, the host runs this just before the chat goes idle. For each record of that chat
+ * that still waits, the reply is read from the chat's own messages and kept with the record. No model is asked. It never throws, and it
+ * holds the chat for one second at most; a chat with no waiting record costs one read of storage.
+ */
+export function relayReplyHook(deps: Pick<RelayDeps, 'session' | 'store' | 'readMs'>) {
+  const limitMs = Math.min(timingOf(deps).readMs, 1000);
+  return async (event: { readonly sessionID: string }): Promise<void> => {
+    try {
+      await within(async () => {
+        const waiting = await waitingReplies(deps.store, event.sessionID);
+        if (!waiting.length) return;
+        const messages = await deps.session.context({ sessionID: event.sessionID as Session.ID });
+        const replies = new Map(waiting.flatMap(messageID => { const reply = replyOf(messages, messageID); return reply ? [[messageID, reply] as const] : []; }));
+        if (replies.size) await saveReplies(deps.store, event.sessionID, replies);
+      }, limitMs);
+    } catch { /* the record is for the panel; the chat goes idle whatever happens here */ }
   };
 }

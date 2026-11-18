@@ -1,0 +1,47 @@
+import { usdString } from './costs.js';
+import type { Reply } from './relay-store.js';
+import type { ChatFacts } from './router.js';
+
+// What Relay reads from a chat's own messages, as `session.context` gives them (OpenCode 2.3.0, seen on an isolated host on 18 Nov 2026).
+// No model is asked, and no text of a message is read. The messages come from the host, so every field is checked before it is used.
+
+type Message = {
+  id?: unknown; type?: unknown; status?: unknown; cost?: unknown; time?: { created?: unknown; firstToken?: unknown; completed?: unknown };
+  model?: { providerID?: unknown; id?: unknown }; tokens?: { input?: unknown; output?: unknown; cache?: { read?: unknown; write?: unknown } };
+};
+const list = (messages: unknown): Message[] => Array.isArray(messages) ? messages.filter(message => message && typeof message === 'object') : [];
+const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+/**
+ * What one answer read and wrote, or null when it carries no counts (an answer that was stopped). The host's `input` leaves out the tokens
+ * read from a cache, and tokens written to a cache were read new, so both of those are "fresh".
+ */
+const counts = (message: Message) => message.type === 'assistant' && message.tokens
+  ? { fresh: count(message.tokens.input) + count(message.tokens.cache?.write), cached: count(message.tokens.cache?.read), output: count(message.tokens.output) } : null;
+
+/** What the reply to one message took, or null while it cannot be read: no such message, no answer to it yet, or an answer with no counts. */
+export function replyOf(messages: unknown, messageID: string): Reply | null {
+  const all = list(messages), at = all.findIndex(message => message.type === 'user' && message.id === messageID);
+  if (at < 0) return null;
+  const rest = all.slice(at + 1), next = rest.findIndex(message => message.type === 'user');
+  // The host keeps one assistant message for each request to the model (a reply with one tool call gave two, on 2.3.0).
+  const answers = (next < 0 ? rest : rest.slice(0, next)).filter(message => message.type === 'assistant'), first = answers[0], read = first && counts(first);
+  if (!read) return null;
+  const asked = all[at].time?.created, word = first.time?.firstToken;
+  return { requests: answers.length, fresh: read.fresh, cached: read.cached, costUsd: usdString(first.cost), seconds: typeof asked === 'number' && typeof word === 'number' && word >= asked ? Math.round((word - asked) / 100) / 10 : null };
+}
+
+/**
+ * The chat's size (what its latest finished answer read and wrote) and each model's latest finished answer, newest first. A finished
+ * compaction starts the chat again: nothing is held by any model then, and the size counts as nothing until the next answer. The host
+ * lists a compacted chat from the compaction's own entry on (2.3.0); the reset here covers a host that still lists what came before.
+ */
+export function chatFacts(messages: unknown, now: number): ChatFacts {
+  let answered: ChatFacts['answered'] = [];
+  for (const message of list(messages)) {
+    if (message.type === 'compaction' && message.status === 'completed') { answered = []; continue; }
+    const read = counts(message), done = message.time?.completed, { providerID, id } = message.model ?? {};
+    if (!read || typeof done !== 'number' || typeof providerID !== 'string' || typeof id !== 'string') continue;
+    answered = [{ providerID, id, tokens: read.fresh + read.cached + read.output, agoMs: Math.max(0, now - done) }, ...answered.filter(other => other.providerID !== providerID || other.id !== id)];
+  }
+  return { tokens: answered[0]?.tokens ?? 0, answered };
+}

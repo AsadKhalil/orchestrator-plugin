@@ -2,14 +2,16 @@ import { Rpc } from '@opencode/plugin/rpc';
 
 const choice = { type: 'object', properties: { providerID: { type: 'string' }, id: { type: 'string' }, variant: { anyOf: [{ type: 'string' }, { type: 'null' }] } }, required: ['providerID', 'id', 'variant'], additionalProperties: false } as const;
 const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] } as const;
-/** One model as the panel sees it: display fields only, never the host's record. Prices are USD for one million tokens; null is unknown. */
+const prices = { inputPerMillion: nullableString, outputPerMillion: nullableString, cacheReadPerMillion: nullableString, cacheWritePerMillion: nullableString } as const;
+const priceNames = ['inputPerMillion', 'outputPerMillion', 'cacheReadPerMillion', 'cacheWritePerMillion'] as const;
+/** One model as the panel sees it: display fields only, never the host's record. Prices are USD for one million tokens; null is unknown. `steps` are the prices for chats over a size. */
 const modelItem = {
   type: 'object', properties: {
     providerID: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' }, status: { type: 'string' },
     variants: { type: 'array', items: { type: 'string' } },
     capabilities: { type: 'object', properties: { input: { type: 'array', items: { type: 'string' } }, output: { type: 'array', items: { type: 'string' } }, tools: { type: 'boolean' } }, required: ['input', 'output', 'tools'], additionalProperties: false },
     limit: { type: 'object', properties: { context: { type: 'number' }, output: { type: 'number' } }, required: ['context', 'output'], additionalProperties: false },
-    cost: { type: 'object', properties: { inputPerMillion: nullableString, outputPerMillion: nullableString, cacheReadPerMillion: nullableString, tiered: { type: 'boolean' } }, required: ['inputPerMillion', 'outputPerMillion', 'cacheReadPerMillion', 'tiered'], additionalProperties: false },
+    cost: { type: 'object', properties: { ...prices, tiered: { type: 'boolean' }, steps: { type: 'array', items: { type: 'object', properties: { above: { type: 'number' }, ...prices }, required: ['above', ...priceNames], additionalProperties: false } } }, required: [...priceNames, 'tiered', 'steps'], additionalProperties: false },
   }, required: ['providerID', 'id', 'name', 'enabled', 'status', 'variants', 'capabilities', 'limit', 'cost'], additionalProperties: false,
 } as const;
 // One set of settings for every project (the host shares plugin storage), the last decisions, and the panel's test box.
@@ -21,7 +23,9 @@ const modeChoice = { type: 'object', properties: { ...choice.properties, useFor:
 const modeChoiceInput = { type: 'object', properties: { ...choice.properties, useFor: { type: 'string' } }, required: ['providerID', 'id', 'variant'], additionalProperties: false } as const;
 const modeLists = { type: 'object', properties: { plan: { type: 'array', items: modeChoice }, execute: { type: 'array', items: modeChoice }, review: { type: 'array', items: modeChoice } }, required: ['plan', 'execute', 'review'], additionalProperties: false } as const;
 const modeListsInput = { type: 'object', properties: { plan: { type: 'array', items: modeChoiceInput }, execute: { type: 'array', items: modeChoiceInput }, review: { type: 'array', items: modeChoiceInput } }, required: ['plan', 'execute', 'review'], additionalProperties: false } as const;
-const decision = { type: 'object', properties: { at: { type: 'string' }, sessionID: { type: 'string' }, kind: { type: 'string', enum: ['chat', 'helper'] }, mode: nullableMode, confidence: nullableNumber, fit: nullableNumber, model: nullableString, ms: { type: 'number' }, costUsd: nullableString, note: nullableString }, required: ['at', 'sessionID', 'kind', 'mode', 'confidence', 'fit', 'model', 'ms', 'costUsd', 'note'], additionalProperties: false } as const;
+/** What the reply to a placed message took; null until the chat has answered it. */
+const reply = { type: 'object', properties: { requests: { type: 'number' }, fresh: { type: 'number' }, cached: { type: 'number' }, costUsd: nullableString, seconds: nullableNumber }, required: ['requests', 'fresh', 'cached', 'costUsd', 'seconds'], additionalProperties: false } as const;
+const decision = { type: 'object', properties: { at: { type: 'string' }, sessionID: { type: 'string' }, kind: { type: 'string', enum: ['chat', 'helper'] }, mode: nullableMode, confidence: nullableNumber, fit: nullableNumber, model: nullableString, ms: { type: 'number' }, costUsd: nullableString, note: nullableString, messageID: nullableString, reply: { anyOf: [reply, { type: 'null' }] } }, required: ['at', 'sessionID', 'kind', 'mode', 'confidence', 'fit', 'model', 'ms', 'costUsd', 'note', 'messageID', 'reply'], additionalProperties: false } as const;
 const relayOutput = { type: 'object', properties: {
   directory: { type: 'string' },
   settings: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, modes: modeLists, decider: nullableChoice }, required: ['revision', 'modes', 'decider'], additionalProperties: false },

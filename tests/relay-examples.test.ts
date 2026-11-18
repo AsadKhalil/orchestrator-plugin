@@ -155,7 +155,7 @@ test('a run stops when the model cannot be reached: no answer to the first reque
 });
 
 test('a model is refused before any request unless it is listed, enabled and free (or the paid switch is on)', () => {
-  const model = (id: string, enabled: boolean, input: string | null, output: string | null) => ({ providerID: 'd', id, name: id, enabled, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: false }, limit: { context: 1000, output: 100 }, cost: { inputPerMillion: input, outputPerMillion: output, cacheReadPerMillion: null, tiered: false } });
+  const model = (id: string, enabled: boolean, input: string | null, output: string | null) => ({ providerID: 'd', id, name: id, enabled, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: false }, limit: { context: 1000, output: 100 }, cost: { inputPerMillion: input, outputPerMillion: output, cacheReadPerMillion: null, cacheWritePerMillion: null, tiered: false, steps: [] } });
   const listed = [model('free', true, '0', '0'), model('off', false, '0', '0'), model('paid', true, '0.24', '0'), model('unknown', true, null, null)];
   assert.equal(modelRefusal('d', 'free', listed, false), null);
   assert.match(modelRefusal('d', 'gone', listed, false)!, /does not list d\/gone as a decision model\. It lists: d\/free, d\/off, d\/paid, d\/unknown\./);

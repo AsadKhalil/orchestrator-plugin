@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerRpc, RelayRpc } from '../src/rpc.js';
-import { recordDecision } from '../src/relay-store.js';
+import { recordDecision, saveReplies } from '../src/relay-store.js';
 
 /** What the real host does with a handler: it supplies the typed-error factory, and the client sees a returned error as a rejected call (a thrown one only as "RPC call failed"). */
 class HostError extends Error { constructor(readonly type: string, message: string, readonly data: unknown) { super(message); } }
@@ -42,7 +42,7 @@ test('registers a read-only inventory endpoint that does not return provider sec
   assert.equal(JSON.stringify(result).includes('hidden'), false);
   assert.equal((result as any).directory, '/repo');
   assert.equal((result as any).models[0].id, 'm');
-  assert.deepEqual((result as any).models[0].cost, { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, tiered: false });
+  assert.deepEqual((result as any).models[0].cost, { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null, tiered: false, steps: [] });
   assert.deepEqual(fits(RelayRpc.methods.listModels.output, result), [], 'the real host refuses an output its contract does not declare');
 });
 
@@ -100,6 +100,15 @@ test('getRelay and saveRelay keep one set of settings for every project, and fit
   await assert.rejects(one.saveRelay({ revision: 1, modes: { ...noModes, plan: [{ ...relayHigh, useFor: 'x'.repeat(201) }] }, decider: relayJudge }), { type: 'rejected', message: /at most 200 characters/ });
   const cleared = await two.saveRelay({ revision: 1, modes: noModes, decider: null });
   assert.deepEqual([cleared.settings.revision, cleared.checks], [2, { active: false, note: 'no decider chosen' }]);
+});
+
+test('a record that says what its reply took fits what the panel and the pill declare', async () => {
+  const host = relayHost(), one = await host.connect('/one'), took = { requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6 };
+  await recordDecision(host.storage, { at: '2026-11-18T00:00:00.000Z', sessionID: 'ses-1', kind: 'chat', mode: 'execute', confidence: 0.9, fit: 0.8, model: 'p/m#high', ms: 150, costUsd: '0', note: null, messageID: 'msg-1' });
+  await saveReplies(host.storage, 'ses-1', new Map([['msg-1', took]]));
+  const recent = await one.getRelayDecisions({}), pill = await one.getRelayChat({ sessionID: 'ses-1' }), all = await one.getRelay({});
+  assert.deepEqual([recent.decisions[0].reply, pill.last.reply, all.decisions[0].messageID], [took, took, 'msg-1']);
+  assert.deepEqual([fits(RelayRpc.methods.getRelayDecisions.output, recent), fits(RelayRpc.methods.getRelayChat.output, pill), fits(RelayRpc.methods.getRelay.output, all)], [[], [], []]);
 });
 
 test("getRelayChat and setRelayChat read and turn one chat's switch, give that chat's last choice, and fit what they declare", async () => {

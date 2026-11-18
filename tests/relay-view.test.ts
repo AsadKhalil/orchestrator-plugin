@@ -79,6 +79,14 @@ test('a recent choice reads as one line, and says whether it was for a chat or a
   assert.equal(recentLine({ ...chat, kind: 'helper', model: null, note: 'not a check' }), 'Helper: left as it was (not a check).');
 });
 
+test('a recent choice says what its reply took, once that is known', () => {
+  const took = { requests: 14, fresh: 84_000, cached: 1200, costUsd: '0.21' as string | null, seconds: 9.2 as number | null };
+  assert.equal(recentLine({ ...chat, reply: took }), 'Chat: Execute, p/exec#high, 98% sure, 150 ms. First request of the reply: 84,000 tokens read new, 1,200 from cache, $0.21, first word after 9.2 s. Requests in the reply: 14.');
+  assert.equal(recentLine({ ...chat, note: 'not sure, so Plan', reply: { ...took, requests: 1, costUsd: null, seconds: null } }), 'Chat: Execute, p/exec#high, 98% sure, 150 ms (not sure, so Plan). First request of the reply: 84,000 tokens read new, 1,200 from cache. Requests in the reply: 1.');
+  assert.equal(recentLine({ ...chat, reply: { ...took, costUsd: '0' } }), 'Chat: Execute, p/exec#high, 98% sure, 150 ms. First request of the reply: 84,000 tokens read new, 1,200 from cache, first word after 9.2 s. Requests in the reply: 14.', 'a cost of 0 can mean not listed, so it is not shown');
+  assert.equal(recentLine({ ...chat, reply: null }), recentLine(chat));
+});
+
 test('cheapest first sorts by the input price, then the output price, compared exactly, with prices not listed last', () => {
   const model = (name: string, input: string | null, output: string | null) => ({ name, cost: { inputPerMillion: input, outputPerMillion: output, tiered: false } });
   const list = [model('none', null, null), model('b', '0.3', '1.2'), model('zero', '0', '0'), model('a', '0.3', '0.6'), model('tiny', '0.000001', '0'), model('big', '10', '30'), model('half', null, '1'), model('a2', '0.3', '0.6')];

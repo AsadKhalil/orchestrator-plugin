@@ -5,7 +5,8 @@ import type { PromptInput } from '@opencode/schema/prompt-input';
 import type { Session } from '@opencode/schema/session';
 import { LATE, within, type DecideInput } from './decider.js';
 import type { ListedModel } from './inventory.js';
-import { getRelaySettings, modelName, recordDecision, setChatSwitch, type Decision, type RelayStore } from './relay-store.js';
+import { chatFacts } from './chat-facts.js';
+import { getRelaySettings, modelName, recentDecisions, recordDecision, setChatSwitch, type Decision, type RelayStore } from './relay-store.js';
 import { brief, linesFor, REVIEW_RULES_KEY, reviewRules, route, type DeciderAnswer } from './router.js';
 import type { ModelChoice } from './settings.js';
 
@@ -13,7 +14,7 @@ import type { ModelChoice } from './settings.js';
 // The message is sent once and unchanged whatever goes wrong before the send, and the note in the record says what happened.
 
 export type RelayDeps = {
-  session: Pick<Plugin.Context['session'], 'get' | 'wait' | 'switchAgent' | 'switchModel' | 'prompt' | 'instructions'>;
+  session: Pick<Plugin.Context['session'], 'get' | 'wait' | 'switchAgent' | 'switchModel' | 'prompt' | 'instructions' | 'context'>;
   store: RelayStore;
   chatModels: () => Promise<ListedModel[]>;
   decide: (decider: ModelChoice | null, input: DecideInput) => Promise<DeciderAnswer>;
@@ -92,10 +93,17 @@ export async function placeMessage(deps: RelayDeps, timing: Timing, input: { rea
   const reading = async <T>(what: string, work: () => Promise<T>): Promise<T> => {
     try { return await work(); } catch (error) { throw new Error(`${what} could not be read: ${brief(error)}`); }
   };
+  /** For the cost check only: the chat's messages and Relay's earlier records. Null when they fail or take longer than the other reads may, and then the line is simply followed. */
+  const spare = async <T>(work: () => Promise<T>): Promise<T | null> => {
+    try { const value = await within(work, Math.min(readMs / 2, 1000)); return value === LATE ? null : value; } catch { return null; }
+  };
   const place = async (): Promise<void> => {
-    const read = await within(() => Promise.all([reading('the settings', () => getRelaySettings(deps.store)), reading('the chat', () => deps.session.get({ sessionID })), reading('the model list', deps.chatModels)]), readMs);
+    const read = await within(() => Promise.all([
+      reading('the settings', () => getRelaySettings(deps.store)), reading('the chat', () => deps.session.get({ sessionID })), reading('the model list', deps.chatModels),
+      spare(() => deps.session.context({ sessionID })), spare(() => recentDecisions(deps.store)),
+    ]), readMs);
     if (read === LATE) { notes.push(`Relay's settings, the chat or the model list did not answer within ${readMs / 1000} seconds`); return; }
-    const [settings, chat, models] = read;
+    const [settings, chat, models, messages, past] = read;
     const files: readonly AttachedFile[] = prompt.files ?? [], uploads = input.uploads ?? [];
     const pictures = files.filter(isPicture).length + uploads.filter(isImage).length;
     const facts = await Promise.all([
@@ -103,9 +111,9 @@ export async function placeMessage(deps: RelayDeps, timing: Timing, input: { rea
       ...uploads.filter(upload => !isImage(upload)).map(async upload => ({ name: upload.name, bytes: await sized(pathToFileURL(upload.path).href) })),
     ]);
     // shortcut: four bytes to a token. Dense text takes more, so a file close to a model's size can still be too big for it.
-    const attachment = { needsImage: pictures > 0, tokens: Math.ceil(facts.reduce((sum, file) => sum + (file.bytes ?? 0), 0) / 4) };
+    const attachment = { needsImage: pictures > 0, tokens: Math.ceil(facts.reduce((sum, file) => sum + (file.bytes ?? 0), 0) / 4), chat: messages === null ? null : chatFacts(messages, Date.now()), past: past ?? [] };
     const current = chat.model ? { providerID: chat.model.providerID, id: chat.model.id, variant: hostVariant(chat.model.variant) } : null;
-    const answer = await deps.decide(settings.decider, { kind: 'chat', text: prompt.text, agent: chat.agent ?? null, files: facts, images: pictures, lines: linesFor(settings, models, attachment) });
+    const answer = await deps.decide(settings.decider, { kind: 'chat', text: prompt.text, agent: chat.agent ?? null, files: facts, images: pictures, lines: linesFor(settings, models, attachment, current) });
     const result = route(answer, settings, models, attachment, current, input.unsure);
     Object.assign(outcome, { mode: result.mode, ms: answer.ms }, answer.kind === 'answer' ? { confidence: answer.confidence, costUsd: answer.costUsd } : {});
     if (result.note !== null) notes.push(result.note);
@@ -129,9 +137,9 @@ export async function placeMessage(deps: RelayDeps, timing: Timing, input: { rea
   return { outcome, notes };
 }
 
-/** The record is for the panel; losing it must not fail a message that was sent. */
-export async function recordPlaced(deps: Pick<RelayDeps, 'store'>, sessionID: string, { outcome, notes }: Placed): Promise<void> {
-  try { await recordDecision(deps.store, { at: new Date().toISOString(), sessionID, kind: 'chat', ...outcome, note: notes.length ? notes.join('; ') : null }); } catch { /* not recorded */ }
+/** The record is for the panel; losing it must not fail a message that was sent. `messageID` is the message's id in the chat, when the host gave one. */
+export async function recordPlaced(deps: Pick<RelayDeps, 'store'>, sessionID: string, { outcome, notes }: Placed, messageID: string | null = null): Promise<void> {
+  try { await recordDecision(deps.store, { at: new Date().toISOString(), sessionID, kind: 'chat', ...outcome, note: notes.length ? notes.join('; ') : null, messageID }); } catch { /* not recorded */ }
 }
 
 export function relayCommand(deps: RelayDeps) {
@@ -140,10 +148,12 @@ export function relayCommand(deps: RelayDeps) {
 
   async function relay({ sessionID, prompt, delivery }: Invocation): Promise<void> {
     const placed = await placeMessage(deps, timing, { sessionID, prompt, unsure: 'plan' });
-    let failure: { error: unknown } | undefined;
+    let failure: { error: unknown } | undefined, sent: unknown;
     // The marker tells the hook of a chat whose switch is on that this message is placed already. The host keeps it with the message and does not send it to the model.
-    try { await deps.session.prompt({ ...prompt, sessionID, delivery, metadata: { relay: 'sent' } }); } catch (error) { failure = { error }; placed.notes.push(`the message could not be sent: ${brief(error)}`); }
-    await recordPlaced(deps, sessionID, placed);
+    try { sent = await deps.session.prompt({ ...prompt, sessionID, delivery, metadata: { relay: 'sent' } }); } catch (error) { failure = { error }; placed.notes.push(`the message could not be sent: ${brief(error)}`); }
+    // The send gives back the new message's entry; its id is the message's id in the chat (seen on 2.3.0, 18 Nov).
+    const messageID = (sent as { id?: unknown } | null | undefined)?.id;
+    await recordPlaced(deps, sessionID, placed, typeof messageID === 'string' ? messageID : null);
     if (failure) throw failure.error;
   }
 

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import plugin from '../src/index.js';
 
 /** A host that keeps what the plugin adds as commands. The host runs the callback again whenever it rebuilds its commands, so the fake runs it twice. */
-function commandHost(records: Map<string, unknown>, options: { rpcFails?: boolean } = {}) {
+function commandHost(records: Map<string, unknown>, options: { rpcFails?: boolean; messages?: unknown[] } = {}) {
   const added: any[] = [], prompts: unknown[] = [], hooks: { name: string; handler: (event: any) => Promise<void> }[] = [], asked: any[] = []; let disposed = 0;
   const sessionHooks: { name: string; handler: (event: any) => Promise<void>; disposed: boolean }[] = [];
   const ctx = {
@@ -18,18 +18,19 @@ function commandHost(records: Map<string, unknown>, options: { rpcFails?: boolea
     session: {
       async get() { return {}; },
       async prompt(input: unknown) { prompts.push(input); },
+      async context() { return options.messages ?? []; },
       async hook(name: string, handler: (event: any) => Promise<void>) { const entry = { name, handler, disposed: false }; sessionHooks.push(entry); return { async dispose() { entry.disposed = true; } }; },
     },
   };
   return { ctx, added, prompts, hooks, asked, sessionHooks, disposed: () => disposed };
 }
 
-test('registers /relay, the helper hook, the switch hook and the panel calls once, and disposes them', async () => {
+test('registers /relay, the helper hook, the switch hook, the idle hook and the panel calls once, and disposes them', async () => {
   const host = commandHost(new Map());
   const cleanup = await plugin.setup(host.ctx as never);
   assert.deepEqual(host.added.map(command => [command.name, typeof command.description, typeof command.execute]), [['relay', 'string', 'function']]);
   assert.deepEqual(host.hooks.map(hook => hook.name), ['execute.before']);
-  assert.equal(host.sessionHooks.filter(hook => hook.name === 'prompt').length, 1, 'one prompt hook for the switch');
+  assert.deepEqual(host.sessionHooks.map(hook => hook.name).sort(), ['experimental.idle', 'prompt'], 'one prompt hook for the switch, and one idle hook for what a reply took');
   await cleanup?.();
   assert.equal(host.disposed(), 3, 'the command, the helper hook and the panel calls');
   assert.equal(host.sessionHooks.every(hook => hook.disposed), true);
@@ -39,7 +40,18 @@ test('when the panel calls cannot be registered, start-up fails and leaves no co
   const host = commandHost(new Map(), { rpcFails: true });
   await assert.rejects(async () => plugin.setup(host.ctx as never), /RPC failed/);
   assert.equal(host.disposed(), 2, 'the command and the helper hook are removed');
-  assert.equal(host.sessionHooks.every(hook => hook.disposed), true, 'the switch hook is removed');
+  assert.equal(host.sessionHooks.length > 0 && host.sessionHooks.every(hook => hook.disposed), true, 'the session hooks that were added are removed');
+});
+
+test('the idle hook as registered reads what the reply took from the chat and keeps it with the record', async () => {
+  const messages = [{ id: 'm2', type: 'user', time: { created: 1000 } }, { id: 'a1', type: 'assistant', time: { created: 1020, firstToken: 1500, completed: 2000 }, model: { providerID: 'p', id: 'm' }, tokens: { input: 900, output: 20, reasoning: 0, cache: { read: 100, write: 50 } }, cost: 0.003 }];
+  const records = new Map<string, unknown>([['relay/settings', { revision: 1, modes: { plan: [], execute: [], review: [{ providerID: 'p', id: 'm', variant: null, useFor: '' }] }, decider: { providerID: 'd', id: 'judge', variant: null } }], ['relay/on/ses-b', true]]), host = commandHost(records, { messages });
+  await plugin.setup(host.ctx as never);
+  await host.sessionHooks.find(hook => hook.name === 'prompt')!.handler({ sessionID: 'ses-b', messageID: 'm2', delivery: 'steer', prompt: { text: 'Check the diff for mistakes.' } });
+  await new Promise(done => setTimeout(done, 20));   // the record is written after the hook returns
+  await host.sessionHooks.find(hook => hook.name === 'experimental.idle')!.handler({ sessionID: 'ses-b', background: [] });
+  assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.messageID, item.reply]), [['m2', { requests: 1, fresh: 950, cached: 100, costUsd: '0.003', seconds: 0.5 }]]);
+  assert.equal(host.asked.length, 1, 'the one decider request; reading the reply asks no model');
 });
 
 test('the switch hook as registered places a message in a chat whose switch is on, and leaves other chats alone', async () => {

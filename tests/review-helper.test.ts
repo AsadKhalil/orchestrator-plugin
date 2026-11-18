@@ -27,7 +27,8 @@ test('a helper whose task is a check starts on the Review model and gets the rul
   assert.equal(asked(f).input[0].text, 'A task that a model is handing to a helper: "Review the changes in src/auth.ts for mistakes."');
   assert.deepEqual(asked(f).questions.map((question: { name: string }) => question.name), ['mode'], 'one Review model: nothing to choose');
   const record = await last(f);
-  assert.deepEqual(Object.keys(record).sort(), ['at', 'confidence', 'costUsd', 'fit', 'kind', 'mode', 'model', 'ms', 'note', 'sessionID']);
+  assert.deepEqual(Object.keys(record).sort(), ['at', 'confidence', 'costUsd', 'fit', 'kind', 'messageID', 'mode', 'model', 'ms', 'note', 'reply', 'sessionID']);
+  assert.deepEqual([record.messageID, record.reply], [null, null], "a helper's record names no message, so nothing is read for it later");
   assert.deepEqual([record.kind, record.sessionID, record.mode, record.model, record.confidence, record.fit, record.costUsd, record.note], ['helper', 'ses-1', 'review', 'p/review', 0.95, null, '0', null]);
   assert.equal(/auth\.ts|Review the changes/.test(JSON.stringify(record)), false, 'the record holds no task text');
   assert.equal(f.calls.some(item => ['get', 'wait', 'switchAgent', 'switchModel', 'put', 'remove', 'prompt'].includes(item.name)), false, 'the calling chat is not touched');

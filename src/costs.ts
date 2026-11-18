@@ -18,3 +18,8 @@ export function formatUsd(value: bigint): string {
   const fraction = (value % SCALE).toString().padStart(12, '0').replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : `${whole}`;
 }
+/** An amount for a sentence: rounded to the cent, and "under $0.01" when that leaves nothing. */
+export function aboutUsd(value: bigint): string {
+  const cents = (value + SCALE / 200n) / (SCALE / 100n);
+  return cents === 0n ? 'under $0.01' : `about $${cents / 100n}.${(cents % 100n).toString().padStart(2, '0')}`;
+}

@@ -145,3 +145,97 @@ test('a failure\'s note is cut at 200 characters and never ends inside a two-uni
   const atTheCut = `${'x'.repeat(199)}\u{1F600}more`;
   assert.doesNotThrow(() => encodeURIComponent(brief(new Error(atTheCut))));
 });
+
+// The whole chat must fit the model. `exec` holds 1,000 tokens and `big` 100,000.
+const two = { modes: { ...settings.modes, execute: [entry('exec', 'small changes'), entry('big', 'large changes')] } };
+const sized = (tokens: number, files = 0) => ({ needsImage: false, tokens: files, chat: { tokens, answered: [] } });
+const fits = (tokens: number, files = 0, current: ReturnType<typeof pick> | null = null) => candidates('execute', two.modes.execute, models, sized(tokens, files), current).usable.map(choice => choice.id);
+
+test('a chat is moved only to a model it fits, with the room OpenCode keeps free before it compacts', () => {
+  assert.deepEqual(fits(850), ['exec', 'big'], 'a small model keeps 15% free');
+  assert.deepEqual(fits(851), ['big']);
+  assert.deepEqual(fits(84_000), ['big'], 'a model of 32,000 tokens or more keeps at least 16,000 free');
+  assert.deepEqual(candidates('execute', two.modes.execute, models, sized(84_001)), { usable: [], note: 'this chat is too long for every chosen Execute model' });
+  assert.deepEqual(fits(80_000, 4001), [], 'the attached files come on top of the chat');
+  assert.deepEqual(fits(84_001, 0, pick('big')), ['big'], 'the model the chat is on already holds it');
+  assert.deepEqual(fits(84_001, 0, pick('big', 'high')), ['big'], 'whatever its effort');
+  const unlisted = [m('exec', ['text'], { limit: { context: 0 } })];
+  assert.deepEqual(candidates('execute', two.modes.execute, unlisted, sized(5_000_000)).usable.map(choice => choice.id), ['exec'], 'a model whose size is not listed is kept');
+  for (const chat of [null, undefined]) assert.deepEqual(candidates('execute', two.modes.execute, models, { needsImage: false, tokens: 0, chat }).usable.map(choice => choice.id), ['exec', 'big'], 'a chat whose size is not known is not measured');
+});
+
+test('the lines asked about and the route use the same fit, so a line still points at its model', () => {
+  const second = sure('execute', 0.9, { execute: { index: 1, confidence: 0.8 } });
+  assert.deepEqual(linesFor(two, models, sized(851)), {}, 'one model left: nothing to ask');
+  assert.deepEqual(linesFor(two, models, sized(851), pick('exec')), { execute: ['small changes', 'large changes'] });
+  assert.deepEqual(route(second, two, models, sized(851), pick('exec')), { switch: true, mode: 'execute', agent: 'build', model: pick('big'), fit: 0.8, note: null });
+  assert.deepEqual(route(second, two, models, sized(90_000), null), { switch: false, mode: 'execute', note: 'this chat is too long for every chosen Execute model' });
+});
+
+// Stay or go. Prices are those of the worked examples in docs/research/2026-11-17-relay-cost-and-model-choice.md (section 4.2 and Appendix B), in USD per million tokens.
+const price = (input: string | null, output: string | null, read: string | null, write: string | null, steps: object[] = []) => ({ inputPerMillion: input, outputPerMillion: output, cacheReadPerMillion: read, cacheWritePerMillion: write, tiered: steps.length > 0, steps });
+const wide = (id: string, cost?: object) => m(id, ['text'], { limit: { context: 1_000_000 }, ...(cost ? { cost } : {}) });
+const priced = [
+  wide('opus', price('4', '20', '0.2', '5')), wide('sonnet', price('2', '10', '0.1', '2.5')),
+  wide('haiku', price('0.1', '0.5', '0.01', '0.125', [{ above: 100_000, inputPerMillion: '0.5', outputPerMillion: '2.5', cacheReadPerMillion: '0.05', cacheWritePerMillion: '0.625' }])),
+  wide('flash', price('0.3', '1.2', '0.006', '0.3')), wide('zero', price('0', '0', '0', '0')), wide('bare'),
+  wide('plain', price('2', '10', null, null)), wide('cheap', price('0.4', '2', null, null)),
+];
+type Extra = { agoMs?: number; answered?: object[]; past?: object[]; current?: ReturnType<typeof pick> | null; chat?: object | null };
+/** A chat of `tokens` on `from`, which answered a minute ago. The decider's line points at `to`, the second model of the Execute list. */
+function move(from: string, to: string, tokens: number, extra: Extra = {}) {
+  const chat = extra.chat === undefined ? { tokens, answered: [{ providerID: 'p', id: from, tokens, agoMs: extra.agoMs ?? 60_000 }, ...(extra.answered ?? [])] } : extra.chat;
+  const lists = { modes: { ...settings.modes, execute: [entry(from, 'the usual work'), entry(to, 'small, clear changes')] } };
+  return route(sure('execute', 0.9, { execute: { index: 1, confidence: 0.8 } }), lists, priced as never, { needsImage: false, tokens: 0, chat, past: extra.past } as never, extra.current === undefined ? pick(from) : extra.current);
+}
+const went = (result: ReturnType<typeof route>) => result.switch ? [result.model.id, result.note] : ['no switch', result.note];
+
+test('a step down to a cheaper model happens only when it pays', () => {
+  for (const [from, to, tokens, goes] of [
+    ['sonnet', 'haiku', 20_000, true], ['sonnet', 'haiku', 60_000, true], ['sonnet', 'haiku', 95_000, true], ['sonnet', 'haiku', 101_000, false], ['sonnet', 'haiku', 150_000, false],
+    ['opus', 'sonnet', 60_000, false], ['opus', 'flash', 35_000, true], ['opus', 'flash', 62_000, true],
+  ] as const) assert.equal(went(move(from, to, tokens))[0], goes ? to : from, `${from} to ${to} at ${tokens} tokens`);
+});
+
+test("when a step down does not pay, the chat's model stays for this message, the mode still sets the agent, and the note says why", () => {
+  assert.deepEqual(move('opus', 'sonnet', 60_000), { switch: true, mode: 'execute', agent: 'build', model: pick('opus'), fit: null,
+    note: "moving this chat to p/sonnet would cost about $0.14 to read it again and save about $0.09 over 6 requests, so the chat's model stays" });
+});
+
+test('what the picked model still holds of the chat is not read again', () => {
+  const held = (agoMs: number) => move('opus', 'sonnet', 100_000, { answered: [{ providerID: 'p', id: 'sonnet', tokens: 92_000, agoMs }] });
+  assert.equal(went(move('opus', 'sonnet', 100_000))[0], 'opus');
+  assert.equal(went(held(120_000))[0], 'sonnet', 'all but 8,000 tokens are still in its cache');
+  assert.equal(went(held(300_001))[0], 'opus', 'after five minutes its cache is gone');
+});
+
+test('the usual number of requests comes from the records of that line, once there are three', () => {
+  const took = (requests: number, model = 'p/sonnet', mode = 'execute') => ({ mode, model, reply: { requests, fresh: 0, cached: 0, costUsd: null, seconds: null } });
+  assert.equal(went(move('opus', 'sonnet', 36_000))[0], 'opus', 'six requests do not pay');
+  assert.equal(went(move('opus', 'sonnet', 36_000, { past: [took(18), took(30), took(4)] }))[0], 'sonnet', 'the middle one of three, 18, pays');
+  assert.equal(went(move('opus', 'sonnet', 36_000, { past: [took(18), took(30), took(18, 'p/haiku'), took(18, 'p/sonnet', 'plan'), { mode: 'execute', model: 'p/sonnet', reply: null }] }))[0], 'opus', 'two records of that line are too few');
+});
+
+test('with nothing to lose, or nothing to compare, the line is followed', () => {
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { agoMs: 300_001 })), ['sonnet', null], "the chat's own cache is older than five minutes");
+  assert.equal(went(move('opus', 'sonnet', 60_000, { agoMs: 300_000 }))[0], 'opus', 'five minutes itself is still live');
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { chat: { tokens: 0, answered: [] } })), ['sonnet', null], 'a new chat, or one just compacted');
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { chat: { tokens: 60_000, answered: [{ providerID: 'p', id: 'flash', tokens: 60_000, agoMs: 1000 }, { providerID: 'p', id: 'opus', tokens: 50_000, agoMs: 9000 }] } })), ['sonnet', null], "the last answer was not the chat's model's");
+  assert.deepEqual(went(move('haiku', 'sonnet', 60_000)), ['sonnet', null], 'a step up is what the line asked for');
+  assert.deepEqual(went(move('plain', 'cheap', 150_000)), ['cheap', null], 'with no cached-read price there is no cache to lose');
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { current: pick('review') })), ['sonnet', null], "the chat's model is not one of this mode's models");
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { current: null })), ['sonnet', null], "the chat's model is not known");
+});
+
+test('a missing price or a size that could not be read means no cost check, and the note says so', () => {
+  assert.deepEqual(went(move('opus', 'zero', 60_000)), ['zero', 'no price listed, so no cost check'], '$0 can mean not listed');
+  assert.deepEqual(went(move('bare', 'sonnet', 60_000)), ['sonnet', 'no price listed, so no cost check']);
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { chat: null })), ['sonnet', "the chat's size could not be read, so no cost check"]);
+  assert.deepEqual(went(move('opus', 'sonnet', 60_000, { chat: null, current: pick('review') })), ['sonnet', null], 'nothing would have been checked anyway');
+});
+
+test('another effort of the same model is not a step down', () => {
+  const lists = { modes: { ...settings.modes, execute: [entry('opus', 'the usual work'), entry('opus', 'hard problems', 'high')] } };
+  const result = route(sure('execute', 0.9, { execute: { index: 1, confidence: 0.8 } }), lists, priced as never, { needsImage: false, tokens: 0, chat: { tokens: 60_000, answered: [{ providerID: 'p', id: 'opus', tokens: 60_000, agoMs: 1000 }] } }, pick('opus'));
+  assert.deepEqual(result, { switch: true, mode: 'execute', agent: 'build', model: pick('opus', 'high'), fit: 0.8, note: null });
+});

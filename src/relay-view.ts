@@ -1,5 +1,5 @@
 import type { ModelCostView } from './inventory.js';
-import type { Decision } from './relay-store.js';
+import type { Decision, Reply } from './relay-store.js';
 import { modeLabel } from './router.js';
 import { MAX_CHARS, MAX_FILE_NAMES } from './decider.js';
 import { parseUsd } from './costs.js';
@@ -77,8 +77,14 @@ export function decisionLine(decision: (Shown & Pick<Decision, 'kind'>) | undefi
   if (!decision) return 'No /relay message yet.';
   return noted(`Last choice${decision.kind === 'helper' ? ' (a helper)' : ''}: ${outcome(decision)}`, decision.note);
 }
+const amount = (tokens: number) => Math.round(tokens).toLocaleString('en-US');
+/** What the reply took, once it is known. A cost of 0 can mean "not listed", so it is left out, like a cost that was not reported. */
+const took = (reply: Reply | null | undefined) => !reply ? '' : ` First request of the reply: ${[
+  `${amount(reply.fresh)} tokens read new`, `${amount(reply.cached)} from cache`,
+  ...(reply.costUsd === null || reply.costUsd === '0' ? [] : [`$${reply.costUsd}`]), ...(reply.seconds === null ? [] : [`first word after ${reply.seconds} s`]),
+].join(', ')}. Requests in the reply: ${reply.requests}.`;
 /** One row of Recent choices. The time is left out: the panel shows it in the viewer's own clock. */
-export const recentLine = (decision: Shown & Pick<Decision, 'kind'>) => noted(`${decision.kind === 'helper' ? 'Helper' : 'Chat'}: ${outcome(decision)}`, decision.note);
+export const recentLine = (decision: Shown & Pick<Decision, 'kind'> & { reply?: Reply | null }) => `${noted(`${decision.kind === 'helper' ? 'Helper' : 'Chat'}: ${outcome(decision)}`, decision.note)}${took(decision.reply)}`;
 
 /** What the test box shows for one try: what Relay would do with the sample message. */
 export function tryLine(result: Shown & Pick<Decision, 'costUsd'>): string {

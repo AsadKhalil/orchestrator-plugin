@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { listProjectModels } from '../src/inventory.js';
-import { usdString } from '../src/costs.js';
+import { aboutUsd, parseUsd, usdString } from '../src/costs.js';
 
 test('returns project model routes without credentials or provider request settings', async () => {
   const calls: unknown[] = [];
@@ -36,18 +36,25 @@ test('a host price becomes a string, and anything doubtful becomes unknown', () 
   for (const value of [0.0000004, -1, Number.NaN, Number.POSITIVE_INFINITY, 1e21, '0.24', null, undefined]) assert.equal(usdString(value), null);
 });
 
+test('an amount in a sentence is rounded to the cent, and anything smaller says so', () => {
+  for (const [usd, text] of [['0.144', 'about $0.14'], ['0.0885', 'about $0.09'], ['0.005', 'about $0.01'], ['0.004999', 'under $0.01'], ['0', 'under $0.01'], ['12.345', 'about $12.35'], ['3', 'about $3.00']] as const) assert.equal(aboutUsd(parseUsd(usd)), text, usd);
+});
+
 const record = (extra: object) => ({ providerID: 'p', id: 'm', name: 'Model', enabled: true, status: 'active', variants: [{ id: 'high', settings: { apiKey: 'hidden' } }], capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 100, output: 10 }, headers: { authorization: 'secret' }, ...extra });
 const host = (data: unknown[], seen: unknown[] = []) => ({ location: { directory: '/repo' }, model: { async list(input: unknown) { seen.push(input); return { data }; } } }) as never;
 
-test('each model carries its base price as strings, and no secrets', async () => {
+test('each model carries its base price, its cache-write price and its price steps as strings, and no secrets', async () => {
   const [one, tiers, none, bare] = await listProjectModels(host([
-    record({ cost: [{ input: 0.15, output: 0.6, cache: { read: 0.003, write: 0 } }] }),
-    record({ cost: [{ tier: { type: 'context', size: 200000 }, input: 2, output: 8, cache: { read: 0, write: 0 } }, { input: 1, output: 4, cache: { read: 0, write: 0 } }] }),
+    record({ cost: [{ input: 0.15, output: 0.6, cache: { read: 0.003, write: 0.1875 } }] }),
+    record({ cost: [{ tier: { type: 'context', size: 272000 }, input: 4, output: 15, cache: { read: 0.4, write: 5 } }, { tier: { type: 'context', size: 200000 }, input: 2, output: 8, cache: { read: 0.2, write: 2.5 } }, { input: 1, output: 4, cache: { read: 0, write: 0 } }, { tier: { type: 'other', size: 5 }, input: 9, output: 9, cache: { read: 9, write: 9 } }] }),
     record({ cost: [] }), record({}),
   ]));
-  assert.deepEqual(one.cost, { inputPerMillion: '0.15', outputPerMillion: '0.6', cacheReadPerMillion: '0.003', tiered: false });
-  assert.deepEqual(tiers.cost, { inputPerMillion: '1', outputPerMillion: '4', cacheReadPerMillion: '0', tiered: true });
-  for (const model of [none, bare]) assert.deepEqual(model.cost, { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, tiered: false });
+  assert.deepEqual(one.cost, { inputPerMillion: '0.15', outputPerMillion: '0.6', cacheReadPerMillion: '0.003', cacheWritePerMillion: '0.1875', tiered: false, steps: [] });
+  assert.deepEqual(tiers.cost, { inputPerMillion: '1', outputPerMillion: '4', cacheReadPerMillion: '0', cacheWritePerMillion: '0', tiered: true, steps: [
+    { above: 200000, inputPerMillion: '2', outputPerMillion: '8', cacheReadPerMillion: '0.2', cacheWritePerMillion: '2.5' },
+    { above: 272000, inputPerMillion: '4', outputPerMillion: '15', cacheReadPerMillion: '0.4', cacheWritePerMillion: '5' },
+  ] }, 'the steps by chat size, smallest first; a tier that is not by chat size is no step');
+  for (const model of [none, bare]) assert.deepEqual(model.cost, { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null, tiered: false, steps: [] });
   assert.equal(/secret|hidden/.test(JSON.stringify([one, tiers, none, bare])), false);
 });
 

@@ -1,13 +1,15 @@
 import { decide, type DecisionsRequest } from '../src/decider.js';
+import type { PriceStep } from '../src/inventory.js';
 import type { RelayDeps } from '../src/relay-command.js';
 import type { Mode, RelaySettings } from '../src/relay-store.js';
 
 // One fake host for the /relay command and the helper hook. It behaves like the real one where the tests depend on it:
-// it keeps the chat's agent and model and changes them on a switch, it reports "no effort" as `default`, and a chat that is busy stays busy until its time is up.
+// it keeps the chat's agent and model and changes them on a switch, it reports "no effort" as `default`, a chat that is busy stays busy until its time is up,
+// and a send gives back the new message's entry, whose id is the message's id in the chat (seen on 2.3.0, 18 Nov).
 
 type Picked = { choice: string; confidence: number };
 export type FakeReply = Picked & { lines?: Partial<Record<Mode, Picked>> };
-type Step = 'get' | 'wait' | 'switchAgent' | 'switchModel' | 'put' | 'remove' | 'prompt' | 'models' | 'storageGet' | 'storageSet';
+type Step = 'get' | 'wait' | 'switchAgent' | 'switchModel' | 'put' | 'remove' | 'prompt' | 'context' | 'models' | 'storageGet' | 'storageSet';
 export type FakeOptions = {
   /** Default: plan [p/plan], execute [p/exec#high], review [p/review], no lines, decider d/judge. */
   settings?: Partial<RelaySettings>;
@@ -21,11 +23,15 @@ export type FakeOptions = {
   /** A file's size by its address; default 2048 bytes. `never` does not answer. */
   sizes?: Record<string, number | null | Error | 'never'>;
   fail?: Partial<Record<Step, Error>>;
+  /** The chat models on offer; default `fakeModels`, which list no price. */
+  models?: typeof fakeModels;
+  /** The chat's messages as `session.context` gives them; default none. `never` does not answer. */
+  messages?: unknown[] | 'never';
 };
 
 const sleep = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
 export const entry = (id: string, variant: string | null = null, useFor = '') => ({ providerID: 'p', id, variant, useFor });
-const listed = (id: string, input: string[], variants: string[], context: number) => ({ providerID: 'p', id, name: id, enabled: true, status: 'active', variants, capabilities: { input, output: ['text'], tools: true }, limit: { context, output: 1000 }, cost: { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, tiered: false } });
+const listed = (id: string, input: string[], variants: string[], context: number) => ({ providerID: 'p', id, name: id, enabled: true, status: 'active', variants, capabilities: { input, output: ['text'], tools: true }, limit: { context, output: 1000 }, cost: { inputPerMillion: null as string | null, outputPerMillion: null as string | null, cacheReadPerMillion: null as string | null, cacheWritePerMillion: null as string | null, tiered: false, steps: [] as PriceStep[] } });
 /** The chat models on offer: all take text; `p/eyes` also takes pictures; `p/small` has a context window of 1,000 tokens. */
 export const fakeModels = [listed('plan', ['text'], [], 100_000), listed('exec', ['text'], ['high'], 100_000), listed('review', ['text'], [], 100_000), listed('usual', ['text'], [], 100_000), listed('eyes', ['text', 'image'], [], 100_000), listed('small', ['text'], [], 1000)];
 
@@ -52,14 +58,15 @@ export function fakeRelay(options: FakeOptions = {}) {
       async wait(input: unknown) { step('wait', input, () => undefined); const left = idleAt - Date.now(); if (left > 0) await sleep(left); calls.push({ name: 'idle', input }); },
       async switchAgent(input: { agent: string }) { step('switchAgent', input, () => { chat.agent = input.agent; }); },
       async switchModel(input: { model: { providerID: string; id: string; variant?: string } }) { step('switchModel', input, () => { chat.model = { variant: 'default', ...input.model }; }); },
-      async prompt(input: unknown) { step('prompt', input, () => undefined); },
+      async prompt(input: { sessionID: string; delivery?: string }) { return step('prompt', input, () => ({ id: 'msg-sent', sessionID: input.sessionID, time: { created: Date.now() }, type: 'user', payload: {}, delivery: input.delivery ?? 'steer' })); },
+      async context(input: unknown) { return step('context', input, () => options.messages === 'never' ? new Promise(() => undefined) : structuredClone(options.messages ?? [])); },
       instructions: { entry: { async put(input: unknown) { step('put', input, () => undefined); }, async remove(input: unknown) { step('remove', input, () => undefined); } } },
     } as never,
     store: {
       async get(key: string) { return step('storageGet', key, () => structuredClone(data.get(key))); },
       async set(key: string, value: unknown) { step('storageSet', key, () => { data.set(key, structuredClone(value)); }); },
     },
-    chatModels: async () => step('models', undefined, () => fakeModels),
+    chatModels: async () => step('models', undefined, () => options.models ?? fakeModels),
     decide: (decider, input) => decide({ decisions }, decider, input, options.decideMs),
     fileSize: async uri => {
       calls.push({ name: 'size', input: uri });

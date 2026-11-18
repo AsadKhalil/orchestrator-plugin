@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX, chatSwitch, setChatSwitch } from '../src/relay-store.js';
+import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX, chatSwitch, setChatSwitch, waitingReplies, saveReplies } from '../src/relay-store.js';
 
 function store() { const map = new Map<string, unknown>(); return { map, async get(k: string) { return structuredClone(map.get(k)); }, async set(k: string, v: unknown) { await new Promise(r => setTimeout(r, 2)); map.set(k, structuredClone(v)); } }; }
 const chat = [{ providerID: 'p', id: 'm', enabled: true, status: 'active', variants: ['high'] }];
@@ -76,11 +76,29 @@ test('the last 20 decisions are kept, newest first, and what cannot be read is l
   for (let i = 0; i < 23; i++) await recordDecision(db, { ...base, at: `2026-11-14T00:00:${String(i).padStart(2, '0')}.000Z` });
   const recent = await recentDecisions(db);
   assert.deepEqual([recent.length, recent[0].at, recent[19].at], [20, '2026-11-14T00:00:22.000Z', '2026-11-14T00:00:03.000Z']);
-  assert.deepEqual(recent[0], { ...base, at: '2026-11-14T00:00:22.000Z' });
+  assert.deepEqual(recent[0], { ...base, at: '2026-11-14T00:00:22.000Z', messageID: null, reply: null });
   assert.deepEqual([...db.map.keys()], ['relay/decisions']);
   assert.deepEqual(await recentDecisions({ async get() { return 'garbage'; } }), []);
   const { fit: _fit, ...older } = { ...base, at: 'earlier' };
-  assert.deepEqual(await recentDecisions({ async get() { return [older, 'garbage', { at: 1 }, { ...base, at: 'later', extra: 'x', mode: 'other' }]; } }), [{ ...base, at: 'later', mode: null }, { ...base, at: 'earlier', fit: null }]);
+  assert.deepEqual(await recentDecisions({ async get() { return [older, 'garbage', { at: 1 }, { ...base, at: 'later', extra: 'x', mode: 'other' }]; } }), [{ ...base, at: 'later', mode: null, messageID: null, reply: null }, { ...base, at: 'earlier', fit: null, messageID: null, reply: null }]);
+});
+
+test("a record keeps its message's id until what the reply took is read; other chats and records already filled are left alone", async () => {
+  const db = store(), base = { sessionID: 'ses-1', kind: 'chat', mode: 'plan', confidence: 0.9, fit: null, model: 'p/m', ms: 150, costUsd: '0', note: null } as const;
+  const took = { requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6 }, other = { ...took, requests: 9 };
+  await recordDecision(db, { ...base, at: 'one', messageID: 'msg-1' });
+  await recordDecision(db, { ...base, at: 'two', messageID: 'msg-2' });
+  await recordDecision(db, { ...base, at: 'three', sessionID: 'ses-2', messageID: 'msg-3' });
+  await recordDecision(db, { ...base, at: 'four', kind: 'helper' });
+  assert.deepEqual(await waitingReplies(db, 'ses-1'), ['msg-1', 'msg-2']);
+  assert.deepEqual(await waitingReplies(db, 'ses-9'), []);
+  await saveReplies(db, 'ses-1', new Map([['msg-1', took], ['msg-3', took]]));
+  assert.deepEqual((await recentDecisions(db)).map(item => [item.at, item.messageID, item.reply]), [['four', null, null], ['three', 'msg-3', null], ['two', 'msg-2', null], ['one', 'msg-1', took]]);
+  assert.deepEqual(await waitingReplies(db, 'ses-1'), ['msg-2']);
+  await saveReplies(db, 'ses-1', new Map([['msg-1', other]]));
+  assert.deepEqual((await recentDecisions(db))[3].reply, took, 'a reply that was read once is not replaced');
+  assert.deepEqual(await recentDecisions({ async get() { return [{ ...base, at: 'x', messageID: 7, reply: { ...took, requests: 'many' } }, { ...base, at: 'y', messageID: 'msg-9', reply: { ...took, costUsd: null, seconds: null, extra: 1 } }]; } }),
+    [{ ...base, at: 'y', messageID: 'msg-9', reply: { ...took, costUsd: null, seconds: null } }, { ...base, at: 'x', messageID: null, reply: null }], 'what cannot be read is unknown, and an unknown field is dropped');
 });
 
 test("a chat's switch starts off, turns on and off, is per chat, and anything but true reads as off", async () => {
