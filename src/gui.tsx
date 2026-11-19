@@ -3,14 +3,15 @@ import { Command, ComposerPill, Panel, Plugin, type MountedSession, type PanelTa
 import { RelayRpc } from './contract.js';
 import { offered, type ModelChoice } from './settings.js';
 import type { ListedModel } from './inventory.js';
-import { USE_FOR_MAX, type Decision, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
+import { USE_FOR_MAX, type Decision, type Mode, type ModeChoice, type RelaySettings, type UsageRow } from './relay-store.js';
 import { describeError, modeLabel, reviewRules } from './router.js';
-import { checksLine, contextLabel, decisionLine, indexLabel, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine, type TableOrder } from './relay-view.js';
+import { checksLine, contextLabel, decisionLine, indexLabel, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine, usageCells, type TableOrder } from './relay-view.js';
 import { panelCss } from './gui-styles.js';
 
 type Model = ListedModel;
 const modeCards = [['plan', 'Thinks, explains and plans. Cannot change files.'], ['execute', 'Writes, changes, fixes and runs. Can change files.'], ['review', 'Checks existing work and reports. Cannot change files. Helpers that check work use these models too.']] as const;
-type RelayView = { directory: string; settings: RelaySettings; decisions: Decision[]; deciders: Model[]; checks: { active: boolean; note: string | null } };
+type RelayView = { directory: string; settings: RelaySettings; decisions: Decision[]; deciders: Model[]; checks: { active: boolean; note: string | null }; priceKey: boolean };
+type UsageView = { since: string | null; rows: UsageRow[]; credit: string | null };
 // The body is built the first time the section is opened, so closed sections cost nothing.
 const Acc = (props: { title: string; sub?: string; children: JSX.Element }) => {
   const [seen, setSeen] = createSignal(false);
@@ -97,7 +98,7 @@ export default Plugin.define({
         const result = createMemo(() => data()?.models);
         // The intelligence index, asked for apart from the models, so a slow or failed fetch never holds the lists up. It never throws.
         type Score = { providerID: string; id: string; index: number; matched: string };
-        const [intel] = createResource(() => props.session, async session => {
+        const [intel, { refetch: refetchIntel }] = createResource(() => props.session, async session => {
           try {
             const value = await call<{ source: string; note: string | null; scores: Score[] }>(session, ({ rpc, options }) => rpc.listIntelligence({}, options));
             return { session, source: value.source, note: value.note, byModel: new Map(value.scores.map(score => [`${score.providerID}/${score.id}`, score])) };
@@ -121,8 +122,35 @@ export default Plugin.define({
             if (props.session === session) setRecent({ session, decisions: value.decisions });
           } catch { /* the list keeps what it showed */ }
         };
-        const poll = setInterval(() => void loadRecent(), 5000); onCleanup(() => clearInterval(poll));
+        // Usage by model, asked for with Recent choices. Storage only on the server's side.
+        const [usage, setUsage] = createSignal<{ session: Session; view: UsageView }>();
+        const loadUsage = async () => {
+          const session = props.session;
+          try {
+            const view = await call<UsageView>(session, ({ rpc, options }) => rpc.getRelayUsage({}, options));
+            if (props.session === session) setUsage({ session, view });
+          } catch { /* the section keeps what it showed */ }
+        };
+        void loadUsage();
+        const poll = setInterval(() => { void loadRecent(); void loadUsage(); }, 5000); onCleanup(() => clearInterval(poll));
+        const usageView = createMemo(() => usage()?.session === props.session ? usage()!.view : undefined);
         const decisions = createMemo(() => recent()?.session === props.session ? recent()!.decisions : data()?.relay.decisions ?? []);
+        // The Artificial Analysis key: typed into a password field, sent once, cleared, and never shown or sent back.
+        const [keyDraft, setKeyDraft] = createSignal('');
+        const [keying, setKeying] = createSignal(false);
+        const [keyNote, setKeyNote] = createSignal<{ session: Session; text: string; bad: boolean }>();
+        const saveKey = async (key: string | null) => {
+          const session = props.session; if (keying()) return;
+          setKeying(true);
+          try {
+            const { rpc, options } = api(session);
+            const value = await rpc.setPriceKey({ key }, options) as { saved: boolean; note: string | null };
+            setKeyDraft('');
+            setKeyNote({ session, bad: !!value.note, text: !value.saved ? 'Key removed.' : value.note ? `Key saved, but ${value.note}.` : 'Key saved. Prices and the index now come from Artificial Analysis.' });
+            await Promise.all([refetch(), refetchIntel(), loadUsage()]);
+          } catch (error) { setKeyNote({ session, bad: true, text: describeError(error, 'Could not save the key.') }); }
+          finally { setKeying(false); }
+        };
         const when = (at: string) => new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         // One model table open at a time: a mode's "Add a model", or the decider's.
         const [adding, setAdding] = createSignal<Mode | 'decider' | null>(null);
@@ -241,6 +269,26 @@ export default Plugin.define({
                 <span class="rl-hint">{data() ? checksLine(data()!.relay.checks) : ''}</span>
                 <span class="rl-hint">{switchHint}</span>
               </div>
+              <Acc title="Usage by model" sub="every message Relay placed">
+                <Show when={usageView()?.rows.length} fallback={<p class="rl-hint">No reply counted yet. Relay counts every message it places: /relay, or any message in a chat with Relay on.</p>}>
+                  <ol class="rl-plain"><For each={usageView()!.rows}>{row => { const cell = usageCells(row); return <li class="rl-hint">
+                    <strong>{cell.model}</strong>{cell.effort === '-' ? '' : ` · ${cell.effort}`}: {cell.requests} request{row.requests === 1 ? '' : 's'}, {cell.cost}
+                    <br />in {cell.input} · out {cell.output} · cache read {cell.cacheRead} · cache write {cell.cacheWrite}
+                    <For each={cell.byPrice}>{line => <><br />{line}</>}</For>
+                  </li>; }}</For></ol>
+                  <span class="rl-hint">{usageView()!.since ? `Since ${when(usageView()!.since!)}.` : ''}{usageView()!.rows.some(row => row.pricesFrom === 'artificial-analysis') ? ' * at Artificial Analysis prices.' : ''}</span>
+                </Show>
+                <Show when={usageView()?.credit}>{credit => <span class="rl-hint">{credit()}</span>}</Show>
+              </Acc>
+              <Acc title="Prices from Artificial Analysis" sub={data()?.relay.priceKey ? 'key saved' : 'no key'}>
+                <span class="rl-hint">For a model OpenCode lists no price for, such as Claude through a subscription login, Relay can take its prices and its intelligence index from Artificial Analysis. Make a free key at artificialanalysis.ai and paste it here. It is kept in OpenCode's plugin storage on this machine, sent only to Artificial Analysis, and never shown again.</span>
+                <div class="rl-inline">
+                  <input class="rl-in" type="password" autocomplete="off" aria-label="Artificial Analysis key" placeholder={data()?.relay.priceKey ? 'A key is saved' : 'Paste a key'} value={keyDraft()} onInput={event => setKeyDraft(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Enter' && keyDraft().trim()) void saveKey(keyDraft()); }} />
+                  <button type="button" class="rl-btn sm" disabled={keying() || !keyDraft().trim()} onClick={() => void saveKey(keyDraft())}>{keying() ? 'Saving…' : 'Save'}</button>
+                  <button type="button" class="rl-btn sm" disabled={keying() || !data()?.relay.priceKey} onClick={() => void saveKey(null)}>Remove</button>
+                </div>
+                <Show when={keyNote()?.session === props.session ? keyNote() : undefined}>{shown => <div class={`rl-note ${shown().bad ? 'n-bad' : ''}`} role="status">{shown().text}</div>}</Show>
+              </Acc>
               <Acc title="Recent choices" sub="the last 20, newest first">
                 <Show when={decisions().length} fallback={<p class="rl-hint">No /relay message yet.</p>}>
                   <ol class="rl-plain"><For each={decisions()}>{item => <li class="rl-hint"><time dateTime={item.at}>{when(item.at)}</time> · {recentLine(item)}</li>}</For></ol>
