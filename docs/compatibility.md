@@ -1011,3 +1011,59 @@ Nothing more was sent to the owner's service after 15:57.
 The effort comes from each answer's `model.variant`. In the real Claude test of 18 Nov (OpenCode 2.3.2), the answers carried `low` after a change of effort and `default` otherwise, and they carried tokens written to a cache (`cache.write`).
 
 **Not tested.** A model with efforts in this check (the mock models have none), reasoning tokens and tokens written to a cache (the mock reports neither), a reply that crosses a price step, a real model with the new record, and Desktop.
+
+## 2026-11-19 — The proof test on OpenCode Go, in the owner's own OpenCode (Windows 11; Desktop's service 2.3.2; the owner's Relay copy, 0.1.0 built from `01b59fb`)
+
+The owner wants numbers for two claims: Relay makes the same work cost less, and it uses less of a plan's 5-hour and weekly limits ("i want to prove 2 point with numbers first is cost second is less usage will be used as 5 hour or weekly limit exhausted too quick"). The design is `docs/superpowers/specs/2026-11-18-relay-proof-design.md`, and the plan is `docs/superpowers/plans/2026-11-19-relay-proof-test.md`.
+
+The owner lifted the rule against testing in their profile for this test: "you can use my opencode as test environment, no need to create throway copy its lengthy process". Then: "i open the folder . i have go subscription . yes test it".
+
+**What ran.**
+- **The script:** `scripts/bench/run.ts`, through the owner's running service, in one folder of its own (`%USERPROFILE%\relay-bench`). The owner opened that folder in Desktop first.
+- **What the model could do:** read and edit files in that folder only. Its `opencode.json` denies shell, web, helpers, skills, questions and outside folders.
+- **The models:**
+  - strong: `opencode-go/kimi-k3.1-pro` ($2 in, $10 out, $0.20 read from cache per million tokens; a $15 monthly limit on the Go plan);
+  - cheap: `opencode-go/glm-5.3-flash` ($0.15, $0.50, $0.03; a $60 monthly limit);
+  - decider: `opencode/jev-1.13-free`.
+- **The exercises:** four Python exercises from Aider's polyglot benchmark: `wordy`, `book-store`, `affine-cipher` and `bowling`. Each ran as the same four messages (plan, build, review, fix) on four sides:
+  - Relay off, on Kimi;
+  - Relay on, with Plan and Review on Kimi and Execute on Flash;
+  - Relay on, with Execute holding both, Flash for "small edits in one or two files" and Kimi for "bigger changes across several files";
+  - Flash alone.
+- **Scoring:** after each chat the script ran the exercise's tests, which the model never saw. A chat passes only if every test passes.
+- **Settings:** Relay's settings were put back after every run.
+
+| | Off | On, one model a mode | On, two for Execute | Cheap only |
+|---|---:|---:|---:|---:|
+| Tasks passed | 3 of 4 | 4 of 4 | 4 of 4 | 2 of 4 |
+| Cost at list price | $1.1119 | $0.5828 | $1.0659 | $0.0764 |
+| 5-hour limit used | 37.1% | 18.0% | 35.5% | 0.6% |
+| Weekly limit used | 14.8% | 7.2% | 14.2% | 0.3% |
+| Saved, against Off | - | 47.6% | 4.1% | 93.1% |
+
+- **Relay with one model a mode.** It cost 47.6% less than Relay off and used 51.5% less of the 5-hour limit, and it passed all four exercises. Relay off failed one: `wordy` raised "syntax error" where the test expects "unknown operation". The decider placed every message as intended:
+  - each plan went to Kimi on the `plan` agent;
+  - each "Implement it." and "Fix what the review found." went to Flash on `build`, with confidence 0.94 to 0.97;
+  - each review went to Kimi.
+
+  Kimi made 29 of the side's 76 requests, and Flash made 47.
+- **Relay with two models for Execute saved 4.1%.** For every "Implement it." and "Fix what the review found." the decider fitted neither line. The record says "no line fits clearly, so the chat's model stays", so the chat stayed on Kimi. A short follow-up says nothing about size, and the decider sees only the message, not the plan before it. All 71 of this side's requests were Kimi's.
+- **The cheap model alone** cost 93.1% less but passed only `affine-cipher` and `bowling`.
+- **Cost.** OpenCode recorded a cost of 0 for every Go request. The table's costs are each request's tokens at Go's list prices (`scripts/bench/lib.ts`). The limit shares are each request's cost divided by its model's monthly limit, as Go's docs count them: the 5-hour limit is 20% of the month, the week 50%.
+- **The test's own use of the owner's Go plan:** about 93% of one 5-hour window, counted by the same arithmetic, pilots included.
+
+**The owner's Plannotator plugin holds Relay's Plan turns.**
+- The owner's global config loads `@plannotator/opencode` with `workflow: plan-agent` and `planningAgents: ["plan"]`.
+- In the first pilot, Relay put the first message on Plan, as it should. The model then called `submit_plan`, and the chat waited for a person to approve the plan until the script stopped it after 15 minutes. That chat is left out of the table.
+- From then on, every test chat was created with `submit_plan` denied for that chat alone, so the call failed at once and the chat went on. Plannotator's instructions still reached the Relay sides' Plan and Review turns, which counts against Relay.
+- **In everyday use** with this setting, every message Relay sends to Plan or Review waits for the owner's approval.
+
+**Other things seen.**
+- **The RPC client checks every answer against the method's output schema.** Another session's uncommitted change to `src/contract.ts` added reply fields that the owner's copy does not send. So the script now reads the contract from the installed copy.
+- **The `wordy` results come from three runs of the script on the same morning,** with the same code for those sides apart from the `submit_plan` rule. Relay off runs on `build`, where Plannotator does not act.
+
+**Not tested.**
+- `variable-length-quantity` and `forth`: they did not fit in the one-window budget.
+- More than one run of each exercise, so with four exercises only large differences mean anything.
+- Chats longer than four messages, helpers, other Go models, and Go's console checked against the computed numbers.
+- The Claude and Ollama parts of the design.
