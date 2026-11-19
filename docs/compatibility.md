@@ -1037,26 +1037,28 @@ The owner lifted the rule against testing in their profile for this test: "you c
 |---|---:|---:|---:|---:|
 | Tasks passed | 3 of 4 | 4 of 4 | 4 of 4 | 2 of 4 |
 | Cost at list price | $1.1119 | $0.5828 | $1.0659 | $0.0764 |
-| 5-hour limit used | 37.1% | 18.0% | 35.5% | 0.6% |
-| Weekly limit used | 14.8% | 7.2% | 14.2% | 0.3% |
-| Saved, against Off | - | 47.6% | 4.1% | 93.1% |
+| 5-hour limit used (estimated) | 37.1% | 18.0% | 35.5% | 0.6% |
+| Weekly limit used (estimated) | 14.8% | 7.2% | 14.2% | 0.3% |
+| Saved, against Off | - | 47.6% | 4.1% | 93.1% (passed fewer) |
 
-- **Relay with one model a mode.** It cost 47.6% less than Relay off and used 51.5% less of the 5-hour limit, and it passed all four exercises. Relay off failed one: `wordy` raised "syntax error" where the test expects "unknown operation". The decider placed every message as intended:
+**How far these numbers go.** Four exercises, one run each, so only a large gap means anything. The limit rows are estimates: each request's list cost divided by its model's monthly limit from Go's published list. They were not checked against Go's own meter or console. `npx tsx scripts/bench/report.ts` prints this table from the raw results files, and it leaves out the stopped pilot chat by itself.
+
+- **Relay with one model a mode is the one large difference.** It cost 47.6% less than Relay off and used about half of the 5-hour limit (an estimated 18.0% against 37.1%), and it passed all four exercises; 4 of 4 against 3 of 4 is within the noise (see the next point). Relay off failed one: `wordy` raised "syntax error" where the test expects "unknown operation". The decider placed every message as intended:
   - each plan went to Kimi on the `plan` agent;
   - each "Implement it." and "Fix what the review found." went to Flash on `build`, with confidence 0.94 to 0.97;
   - each review went to Kimi.
 
   Kimi made 29 of the side's 76 requests, and Flash made 47.
-- **Relay with two models for Execute saved 4.1%.** For every "Implement it." and "Fix what the review found." the decider fitted neither line. The record says "no line fits clearly, so the chat's model stays", so the chat stayed on Kimi. A short follow-up says nothing about size, and the decider sees only the message, not the plan before it. All 71 of this side's requests were Kimi's.
-- **The cheap model alone** cost 93.1% less but passed only `affine-cipher` and `bowling`.
-- **Cost.** OpenCode recorded a cost of 0 for every Go request. The table's costs are each request's tokens at Go's list prices (`scripts/bench/lib.ts`). The limit shares are each request's cost divided by its model's monthly limit, as Go's docs count them: the 5-hour limit is 20% of the month, the week 50%.
+- **Relay with two models for Execute ran as a second Relay off.** For every "Implement it." and "Fix what the review found." the decider fitted neither line. The record says "no line fits clearly, so the chat's model stays", so the chat stayed on Kimi. A short follow-up says nothing about size, and the decider sees only the message, not the plan before it. All 71 of this side's requests were Kimi's, as all of Relay off's were. So its 4.1% lower cost and its one more task passed are the difference between two runs of the same setup: gaps of that size mean nothing in this test.
+- **The cheap model alone** cost 93.1% less but passed only `affine-cipher` and `bowling`, so the table marks its saving "passed fewer".
+- **Cost.** OpenCode recorded a cost of 0 for every Go request. The table's costs are each request's tokens at Go's list prices (`scripts/bench/lib.ts`). The limit shares are each request's cost divided by its model's monthly limit, as Go's docs count them: the 5-hour limit is 20% of the month, the week 50%. OpenCode keeps reasoning apart from output: in 173 of the 297 requests the reasoning count was larger than the output count, so `output` cannot include it. The two are billed together as output.
 - **The test's own use of the owner's Go plan:** about 93% of one 5-hour window, counted by the same arithmetic, pilots included.
 
-**The owner's Plannotator plugin holds Relay's Plan turns.**
+**The owner's Plannotator plugin can hold Relay's Plan turns.**
 - The owner's global config loads `@plannotator/opencode` with `workflow: plan-agent` and `planningAgents: ["plan"]`.
 - In the first pilot, Relay put the first message on Plan, as it should. The model then called `submit_plan`, and the chat waited for a person to approve the plan until the script stopped it after 15 minutes. That chat is left out of the table.
 - From then on, every test chat was created with `submit_plan` denied for that chat alone, so the call failed at once and the chat went on. Plannotator's instructions still reached the Relay sides' Plan and Review turns, which counts against Relay.
-- **In everyday use** with this setting, every message Relay sends to Plan or Review waits for the owner's approval.
+- **In everyday use** with this setting, a message Relay sends to Plan or Review can wait for the owner's approval, whenever the model calls `submit_plan`.
 
 **Other things seen.**
 - **The RPC client checks every answer against the method's output schema.** Another session's uncommitted change to `src/contract.ts` added reply fields that the owner's copy does not send. So the script now reads the contract from the installed copy.

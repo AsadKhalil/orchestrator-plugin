@@ -4,9 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { permissionAnswer, resetFolder } from '../scripts/bench/folder.js';
+import { isProject, permissionAnswer, resetFolder, TEST_CONFIG } from '../scripts/bench/folder.js';
 import { formatUsd, parseUsd } from '../src/costs.js';
-import { limitShare, monthShare, requestCost, sideTotals, table, type Cost } from '../scripts/bench/lib.js';
+import { commonChats, limitShare, monthShare, requestCost, sideTotals, stopReason, table, type ChatResult, type Cost } from '../scripts/bench/lib.js';
+import { restoreSettings } from '../scripts/bench/relay-settings.js';
 
 // The proof test's exercises (scripts/bench/tasks): Exercism's Python exercises, as Aider's polyglot benchmark chose them.
 const tasks = fileURLToPath(new URL('../scripts/bench/tasks/', import.meta.url));
@@ -42,34 +43,57 @@ test('a share of Go\'s limits follows its docs: $1.50 on a model with a $15 mont
   assert.equal(limitShare(parseUsd('6'), '60').month, '10.0');
 });
 
+const chat = (task: string, side: ChatResult['side'], passed: boolean, usd: string, stopped: string | null = null): ChatResult =>
+  ({ task, side, passed, cost: parseUsd(usd), month: monthShare(parseUsd(usd), '15'), stopped });
+
 test('the table shows tasks passed and the saving against Off', () => {
-  const totals = sideTotals([
-    { task: 'wordy', side: 'off', passed: true, cost: parseUsd('0.1'), month: monthShare(parseUsd('0.1'), '15') },
-    { task: 'wordy', side: 'on-one', passed: false, cost: parseUsd('0.04'), month: monthShare(parseUsd('0.04'), '15') },
-  ]);
-  const printed = table(totals);
+  const printed = table(sideTotals([chat('wordy', 'off', true, '0.1'), chat('wordy', 'on-one', false, '0.04')]));
   assert.ok(printed.includes('| Tasks passed | 1 of 1 | 0 of 1 |'), printed);
-  assert.ok(printed.includes('| Saved, against Off | - | 60.0% |'), printed);
+  assert.ok(printed.includes('| Saved, against Off | - | 60.0% (passed fewer) |'), printed);
 });
 
-test('a side that used two models counts each against its own monthly limit', () => {
+test('a side that used two models counts each against its own monthly limit, and the limit rows say they are estimates', () => {
   // $1.50 on a model with a $15 limit and $6 on one with a $60 limit are 10% of the month each (Go's docs), so 20% together.
   const month = monthShare(parseUsd('1.5'), '15') + monthShare(parseUsd('6'), '60');
   const printed = table(sideTotals([{ task: 'wordy', side: 'on-one', passed: true, cost: parseUsd('7.5'), month }]));
-  assert.ok(printed.includes('| 5-hour limit used | 100.0% |'), printed);
-  assert.ok(printed.includes('| Weekly limit used | 40.0% |'), printed);
+  assert.ok(printed.includes('| 5-hour limit used (estimated) | 100.0% |'), printed);
+  assert.ok(printed.includes('| Weekly limit used (estimated) | 40.0% |'), printed);
 });
 
-// The test folder is emptied before each chat. Only a folder holding the test's opencode.json may be emptied, and that file stays.
+test('a side that passed as many tasks as Off shows its saving unmarked', () => {
+  const printed = table(sideTotals([chat('wordy', 'off', true, '0.1'), chat('wordy', 'cheap', true, '0.01')]));
+  assert.ok(printed.includes('| Saved, against Off | - | 90.0% |'), printed);
+});
+
+test('a stopped chat is left out, and the table compares only the tasks every side finished', () => {
+  const { kept, dropped } = commonChats([
+    chat('wordy', 'off', true, '0.1'), chat('wordy', 'on-one', true, '0.05'),
+    chat('bowling', 'off', true, '0.1'), chat('bowling', 'on-one', false, '0.01', 'no answer within 15 minutes'),
+  ]);
+  assert.deepEqual(kept.map(item => `${item.task} ${item.side}`), ['wordy off', 'wordy on-one']);
+  assert.deepEqual(dropped, ['bowling on-one (stopped: no answer within 15 minutes)', 'bowling (not finished on on-one)']);
+});
+
+test('a task that ran twice on one side is refused rather than counted twice', () => {
+  assert.throws(() => commonChats([chat('wordy', 'off', true, '0.1'), chat('wordy', 'off', false, '0.1')]), /wordy ran twice on off/);
+});
+
+test('a run stops at a failed request, or at a request on a model with no price', () => {
+  assert.equal(stopReason([{ model: 'opencode-go/kimi-k3.1-pro', error: null, priced: true }]), null);
+  assert.match(stopReason([{ model: 'opencode-go/kimi-k3.1-pro', error: { type: 'rate_limit', message: 'limit reached' }, priced: true }]) ?? '', /a request failed: .*limit reached/);
+  assert.match(stopReason([{ model: 'other/model', error: null, priced: false }]) ?? '', /other\/model has no list price/);
+});
+
+// The test folder is emptied before each chat. Only a folder whose opencode.json is the test's own may be emptied, and that file stays.
 test('resetting the test folder keeps opencode.json, removes the rest and writes the task files', () => {
-  const folder = mkdtempSync(join(tmpdir(), 'relay-bench-test-'));
+  const folder = mkdtempSync(join(tmpdir(), 'relay-bench-test-')), config = JSON.stringify(TEST_CONFIG, null, 2);
   try {
-    writeFileSync(join(folder, 'opencode.json'), '{"permissions":[]}');
+    writeFileSync(join(folder, 'opencode.json'), config);
     writeFileSync(join(folder, 'left_over.py'), 'x = 1');
     mkdirSync(join(folder, 'sub')); writeFileSync(join(folder, 'sub', 'b.txt'), 'b');
     resetFolder(folder, { 'instructions.md': '# Wordy', 'wordy.py': 'def answer(question):\n    pass\n' });
     assert.deepEqual(readdirSync(folder).sort(), ['instructions.md', 'opencode.json', 'wordy.py']);
-    assert.equal(readFileSync(join(folder, 'opencode.json'), 'utf8'), '{"permissions":[]}');
+    assert.equal(readFileSync(join(folder, 'opencode.json'), 'utf8'), config);
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
@@ -82,7 +106,17 @@ test('a folder without the test\'s opencode.json is never emptied', () => {
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
-test('a permission is allowed once, and only for reading or editing inside the test folder', () => {
+test('a folder whose opencode.json is not the test\'s own, such as a real project or one a model edited, is never emptied', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'relay-bench-test-'));
+  try {
+    writeFileSync(join(folder, 'opencode.json'), '{"permissions":[]}');
+    writeFileSync(join(folder, 'precious.py'), 'keep me');
+    assert.throws(() => resetFolder(folder, { 'wordy.py': '' }), /not the test's own/);
+    assert.deepEqual(readdirSync(folder).sort(), ['opencode.json', 'precious.py']);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('a permission is allowed once, and only for reading or editing inside the test folder, never its opencode.json', () => {
   const folder = join(tmpdir(), 'relay-bench');
   assert.equal(permissionAnswer({ action: 'edit', resources: [join(folder, 'wordy.py')] }, folder), 'once');
   assert.equal(permissionAnswer({ action: 'read', resources: ['wordy.py'] }, folder), 'once');
@@ -90,4 +124,40 @@ test('a permission is allowed once, and only for reading or editing inside the t
   assert.equal(permissionAnswer({ action: 'edit', resources: ['../outside.py'] }, folder), 'reject');
   assert.equal(permissionAnswer({ action: 'edit', resources: [] }, folder), 'reject');
   assert.equal(permissionAnswer({ action: 'shell', resources: ['python wordy.py'] }, folder), 'reject');
+  assert.equal(permissionAnswer({ action: 'edit', resources: [join(folder, 'opencode.json')] }, folder), 'reject');
+  assert.equal(permissionAnswer({ action: 'write', resources: ['OpenCode.JSON'] }, folder), 'reject');
+});
+
+test('a run only starts in a folder that OpenCode has as a project', () => {
+  assert.equal(isProject([{ canonical: 'C:\\Users\\someone\\relay-bench' }], 'c:/users/someone/relay-bench/'), true);
+  assert.equal(isProject([{ canonical: 'C:\\Users\\someone\\other' }], 'C:\\Users\\someone\\relay-bench'), false);
+  assert.equal(isProject([], 'C:\\Users\\someone\\relay-bench'), false);
+});
+
+// A stand-in for Relay's settings RPC that behaves as the real store does: a save with an old revision is refused.
+function fakeRelay(failSave = false) {
+  let stored = { revision: 3, modes: { plan: [{ providerID: 'p', id: 'big', variant: null, useFor: '' }], execute: [], review: [] } as object, decider: { providerID: 'p', id: 'judge', variant: null } as object | null };
+  return {
+    stored: () => stored,
+    getRelay: async () => ({ settings: structuredClone(stored) }),
+    saveRelay: async (input: { revision: number; modes: object; decider: object | null }) => {
+      if (failSave) throw new Error('the service went away');
+      if (input.revision !== stored.revision) throw new Error('stale revision');
+      stored = { revision: stored.revision + 1, modes: input.modes, decider: input.decider };
+      return { settings: stored };
+    },
+  };
+}
+
+test('putting Relay\'s settings back restores them and checks that they are back', async () => {
+  const relay = fakeRelay(), before = { modes: { plan: [], execute: [], review: [] }, decider: null };
+  const result = await restoreSettings(relay, {}, before, 'out/results.json');
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual({ modes: relay.stored().modes, decider: relay.stored().decider }, before);
+});
+
+test('when the settings cannot be put back, it says so and where the old ones are, instead of throwing', async () => {
+  const result = await restoreSettings(fakeRelay(true), {}, { modes: { plan: [], execute: [], review: [] }, decider: null }, 'out/results.json');
+  assert.equal(result.ok, false);
+  assert.match(result.message, /NOT put back.*the service went away.*out\/results\.json/s);
 });

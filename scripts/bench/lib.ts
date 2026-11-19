@@ -37,9 +37,32 @@ export function limitShare(cost: bigint, monthlyUsd: string): { month: string; f
   return shares(monthShare(cost, monthlyUsd));
 }
 
-/** One chat: its cost at list price, and its share of the month summed request by request, each at its own model's monthly limit. */
-export type ChatResult = { task: string; side: Side; passed: boolean; cost: bigint; month: bigint };
+/** One chat: its cost at list price, and its share of the month summed request by request, each at its own model's monthly limit. `stopped` says why the runner stopped it, if it did. */
+export type ChatResult = { task: string; side: Side; passed: boolean; cost: bigint; month: bigint; stopped?: string | null };
 export type SideTotal = { passed: number; tasks: number; cost: bigint; month: bigint };
+
+/** Why a run must stop after these requests: one that failed (a refusal, a limit), or one on a model with no list price, which would count as $0. Null when neither. */
+export function stopReason(entries: readonly { model: string; error: unknown; priced: boolean }[]): string | null {
+  const failed = entries.find(entry => entry.error), unpriced = entries.find(entry => !entry.priced);
+  if (failed) return `a request failed: ${JSON.stringify(failed.error).slice(0, 300)}`;
+  return unpriced ? `${unpriced.model} has no list price, so a request on it would count as $0` : null;
+}
+
+/** The chats a fair table can use: stopped chats are left out, then only the tasks that every side present finished. A task finished twice on one side is refused. */
+export function commonChats(chats: readonly ChatResult[]): { kept: ChatResult[]; dropped: string[] } {
+  const dropped = chats.filter(chat => chat.stopped).map(chat => `${chat.task} ${chat.side} (stopped: ${chat.stopped})`);
+  const finished = chats.filter(chat => !chat.stopped), seen = new Set<string>();
+  for (const chat of finished) {
+    if (seen.has(`${chat.task}|${chat.side}`)) throw new Error(`${chat.task} ran twice on ${chat.side}: give each run's results once`);
+    seen.add(`${chat.task}|${chat.side}`);
+  }
+  const sides = SIDES.filter(side => finished.some(chat => chat.side === side)), keep = new Set<string>();
+  for (const task of new Set(chats.map(chat => chat.task))) {
+    const missing = sides.filter(side => !seen.has(`${task}|${side}`));
+    if (missing.length === 0) keep.add(task); else dropped.push(`${task} (not finished on ${missing.join(', ')})`);
+  }
+  return { kept: finished.filter(chat => keep.has(chat.task)), dropped };
+}
 
 /** Each side's tasks passed, tasks run, cost and share of the month, in the order of SIDES. */
 export function sideTotals(chats: ChatResult[]): Map<Side, SideTotal> {
@@ -59,18 +82,21 @@ const dollars = (cost: bigint) => { const units = (cost + 50_000_000n) / 100_000
 export function table(totals: Map<Side, SideTotal>): string {
   const sides = [...totals.keys()], off = totals.get('off');
   const row = (name: string, cell: (side: Side) => string) => `| ${name} | ${sides.map(cell).join(' | ')} |`;
+  // A side that passed fewer tasks than Off did less work, so its saving is marked rather than shown as a plain saving.
   const saved = (side: Side) => {
-    const cost = totals.get(side)!.cost;
+    const { cost, passed } = totals.get(side)!;
     if (side === 'off' || !off || off.cost === 0n) return '-';
-    return off.cost >= cost ? `${percent(off.cost - cost, off.cost)}%` : `-${percent(cost - off.cost, off.cost)}%`;
+    const amount = off.cost >= cost ? `${percent(off.cost - cost, off.cost)}%` : `-${percent(cost - off.cost, off.cost)}%`;
+    return passed < off.passed ? `${amount} (passed fewer)` : amount;
   };
   return [
     `| | ${sides.map(side => LABELS[side]).join(' | ')} |`,
     `|---|${sides.map(() => '---:').join('|')}|`,
     row('Tasks passed', side => `${totals.get(side)!.passed} of ${totals.get(side)!.tasks}`),
     row('Cost at list price', side => dollars(totals.get(side)!.cost)),
-    row('5-hour limit used', side => `${shares(totals.get(side)!.month).fiveHour}%`),
-    row('Weekly limit used', side => `${shares(totals.get(side)!.month).week}%`),
+    // The limit shares are list cost over Go's published monthly limits, not a reading of Go's own meter.
+    row('5-hour limit used (estimated)', side => `${shares(totals.get(side)!.month).fiveHour}%`),
+    row('Weekly limit used (estimated)', side => `${shares(totals.get(side)!.month).week}%`),
     row('Saved, against Off', saved),
   ].join('\n');
 }

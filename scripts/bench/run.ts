@@ -11,8 +11,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { OpenCode } from '@opencode/client/promise';
 import { formatUsd, parseUsd } from '../../src/costs.js';
-import { permissionAnswer, resetFolder } from './folder.js';
-import { MONTH, monthShare, requestCost, shares, SIDES, type Cost, type Side, type Tokens } from './lib.js';
+import { isProject, permissionAnswer, resetFolder } from './folder.js';
+import { MONTH, monthShare, requestCost, shares, SIDES, stopReason, type Cost, type Side, type Tokens } from './lib.js';
+import { restoreSettings } from './relay-settings.js';
 
 const execFile = promisify(execFileCallback);
 const { values: flags } = parseArgs({ options: { plan: { type: 'string' }, out: { type: 'string' }, tasks: { type: 'string' }, sides: { type: 'string' }, check: { type: 'boolean' }, budget: { type: 'string' } } });
@@ -60,7 +61,6 @@ const client = OpenCode.make({ baseUrl: service.url, headers: { authorization } 
 const location = { directory: folder }, options = { location }, rpc = client.rpc(RelayRpc) as any;
 const items = (value: unknown): any[] => (Array.isArray(value) ? value : ((value as { data?: unknown[] } | null)?.data ?? []));
 const sleep = (ms: number) => new Promise(done => setTimeout(done, ms));
-const same = (a: string, b: string) => a.replaceAll('\\', '/').replace(/\/$/, '').toLowerCase() === b.replaceAll('\\', '/').replace(/\/$/, '').toLowerCase();
 const info = await (await fetch(`${service.url}/api/info`, { headers: { authorization }, signal: AbortSignal.timeout(30_000) })).json() as { version?: string };
 const opencodeVersion = info.version ?? 'unknown';
 
@@ -77,8 +77,7 @@ async function runTests(dir: string, module: string): Promise<{ passed: boolean;
 
 async function check(): Promise<void> {
   const problems: string[] = [];
-  const projects = items(await client.project.list({}));
-  if (!projects.some(project => same(String(project.canonical ?? project.directory ?? ''), folder))) problems.push(`OpenCode has no project for ${folder}: open it in Desktop first`);
+  if (!isProject(items(await client.project.list({})), folder)) problems.push(`OpenCode has no project for ${folder}: open it in Desktop first`);
   else {
     // Only now, with the folder known to the service, is it asked anything about it.
     const models = items((await rpc.listModels({}, options)).models);
@@ -101,7 +100,7 @@ async function check(): Promise<void> {
   console.log(problems.length > 0 ? `NOT READY:\n- ${problems.join('\n- ')}` : `PASS: OpenCode ${opencodeVersion}; the folder ${folder} is a project; ${STRONG.id} and ${CHEAP.id} are enabled; ${DECIDER.id} can decide; ${version}; each of ${tasks.length} stubs fails its tests`);
 }
 
-type Entry = { model: string; agent: string; tokens: Tokens; openCodeCost: number; cost: string; month: string; created: number; completed: number | null; error: unknown };
+type Entry = { model: string; agent: string; tokens: Tokens; openCodeCost: number; cost: string; month: string; priced: boolean; created: number; completed: number | null; error: unknown };
 type Chat = { task: string; side: Side; sessionID: string; passed: boolean; testTail: string; seconds: number; stopped: string | null; entries: Entry[]; decisions: { mode: string | null; model: string | null; confidence: number | null; note: string | null }[] };
 
 /** Waits until the chat has gone idle after `before` entries, answering its permission questions meanwhile. Returns why it gave up, or null. */
@@ -124,7 +123,8 @@ function entryOf(entry: any, prices: Map<string, Cost>): Entry {
   const model = `${entry.model?.providerID}/${entry.model?.id}`, t = entry.tokens ?? {};
   const tokens: Tokens = { input: t.input ?? 0, output: t.output ?? 0, reasoning: t.reasoning ?? 0, cache: { read: t.cache?.read ?? 0, write: t.cache?.write ?? 0 } };
   const price = prices.get(model), cost = price ? requestCost(tokens, price) : 0n, monthly = MONTHLY[plan as 'go' | 'go-plus'][entry.model?.id];
-  return { model, agent: entry.agent, tokens, openCodeCost: entry.cost ?? 0, cost: formatUsd(cost), month: (monthly ? monthShare(cost, monthly) : 0n).toString(), created: entry.time?.created, completed: entry.time?.completed ?? null, error: entry.error ?? null };
+  const priced = price !== undefined && price.inputPerMillion !== null && price.outputPerMillion !== null && monthly !== undefined;
+  return { model, agent: entry.agent, tokens, openCodeCost: entry.cost ?? 0, cost: formatUsd(cost), month: (monthly ? monthShare(cost, monthly) : 0n).toString(), priced, created: entry.time?.created, completed: entry.time?.completed ?? null, error: entry.error ?? null };
 }
 
 async function runChat(task: string, side: Side, prices: Map<string, Cost>): Promise<Chat> {
@@ -135,35 +135,46 @@ async function runChat(task: string, side: Side, prices: Map<string, Cost>): Pro
   const start = side === 'cheap' ? CHEAP : STRONG;
   // The owner's Plannotator plugin watches the `plan` agent and makes each plan wait for a person's approval (`submit_plan`), which an
   // unattended test cannot give: each test chat is created with that tool denied, so a call fails at once and the chat goes on.
-  const permissions = [{ action: 'submit_plan', resource: '*', effect: 'deny' as const }];
+  // The folder's opencode.json must stay the test's own; resetFolder refuses a changed one before the next chat, and this asks the host not to allow the edit at all.
+  const permissions = [{ action: 'submit_plan', resource: '*', effect: 'deny' as const }, ...['edit', 'write'].map(action => ({ action, resource: '*opencode.json', effect: 'deny' as const }))];
   const { id: sessionID } = await client.session.create({ model: { providerID: start.providerID, id: start.id }, location, title: `relay-bench ${task} ${side}`, permissions });
-  if (on) await client.session.command({ sessionID, name: 'relay', text: 'on' });
   let stopped: string | null = null;
-  for (const text of messages(module)) {
-    const before = items(await client.session.context({ sessionID })).length;
-    await client.session.prompt({ sessionID, text });
-    stopped = await untilIdle(sessionID, before);
-    if (stopped) break;
+  try {
+    if (on) await client.session.command({ sessionID, name: 'relay', text: 'on' });
+    for (const text of messages(module)) {
+      const before = items(await client.session.context({ sessionID })).length;
+      await client.session.prompt({ sessionID, text });
+      stopped = await untilIdle(sessionID, before);
+      // A refused or failed request (a limit, say), or one on a model with no price, ends the chat at once: no further message is sent.
+      stopped ??= stopReason(items(await client.session.context({ sessionID })).slice(before).filter(entry => entry.type === 'assistant').map(entry => entryOf(entry, prices)));
+      if (stopped) break;
+    }
+  } finally {
+    if (on) await rpc.setRelayChat({ sessionID, on: false }, options).catch(() => {});
   }
   const entries = items(await client.session.context({ sessionID })).filter(entry => entry.type === 'assistant').map(entry => entryOf(entry, prices));
-  const failed = entries.find(entry => entry.error);
-  if (!stopped && failed) stopped = `a request failed: ${JSON.stringify(failed.error).slice(0, 300)}`;
+  stopped ??= stopReason(entries);
   const decisions = items((await rpc.getRelayDecisions({}, options)).decisions).filter(record => record.sessionID === sessionID).reverse()
     .map(record => ({ mode: record.mode, model: record.model, confidence: record.confidence, note: record.note }));
-  if (on) await rpc.setRelayChat({ sessionID, on: false }, options);
   copyFileSync(join(source, `${module}_test.py`), join(folder, `${module}_test.py`));
   const tests = await runTests(folder, module);
   return { task, side, sessionID, passed: tests.passed, testTail: tests.tail, seconds: Math.round((Date.now() - began) / 1000), stopped, entries, decisions };
 }
 
 async function run(): Promise<void> {
+  // AGENTS.md: the service is asked nothing about a folder it has not loaded, so the run starts only once the folder is a project.
+  if (!isProject(items(await client.project.list({})), folder)) throw new Error(`OpenCode has no project for ${folder}: open it in Desktop first, then run --check`);
   mkdirSync(out, { recursive: true });
   const before = await rpc.getRelay({}, options);
   const listed = items((await rpc.listModels({}, options)).models);
   const prices = new Map<string, Cost>(listed.filter(model => [STRONG, CHEAP].some(wanted => model.providerID === wanted.providerID && model.id === wanted.id)).map(model => [`${model.providerID}/${model.id}`, model.cost]));
   const results = { startedAt: new Date().toISOString(), opencodeVersion, plan, folder, models: { strong: `${STRONG.providerID}/${STRONG.id}`, cheap: `${CHEAP.providerID}/${CHEAP.id}`, decider: `${DECIDER.providerID}/${DECIDER.id}` },
     prices: Object.fromEntries(prices), settingsBefore: before.settings, stoppedBecause: null as string | null, chats: [] as Chat[] };
-  const save = () => writeFileSync(join(out, 'results.json'), JSON.stringify(results, null, 2));
+  const file = join(out, 'results.json'), save = () => writeFileSync(file, JSON.stringify(results, null, 2));
+  save();   // settingsBefore is on disk before any change, so the settings can be put back by hand if everything else fails
+  const restore = async () => { const { message } = await restoreSettings(rpc, options, before.settings, file); save(); console.log(`${message} Results: ${file}${results.stoppedBecause ? `. Stopped: ${results.stoppedBecause}` : ''}`); };
+  // Ctrl+C would skip the `finally` below; this puts the settings back first.
+  process.once('SIGINT', () => { results.stoppedBecause = 'stopped by Ctrl+C'; void restore().finally(() => process.exit(130)); });
   const monthOf = (chat: Chat) => chat.entries.reduce((sum, entry) => sum + BigInt(entry.month), 0n);
   try {
     outer: for (const task of tasks) for (const side of sides) {
@@ -177,10 +188,7 @@ async function run(): Promise<void> {
       if (chat.stopped) { results.stoppedBecause = `${task} ${side}: ${chat.stopped}`; break outer; }
     }
   } finally {
-    const now = await rpc.getRelay({}, options);
-    await rpc.saveRelay({ revision: now.settings.revision, modes: before.settings.modes, decider: before.settings.decider }, options);
-    save();
-    console.log(`Relay's settings are back as they were (revision ${now.settings.revision + 1}). Results: ${join(out, 'results.json')}${results.stoppedBecause ? `. Stopped: ${results.stoppedBecause}` : ''}`);
+    await restore();
   }
 }
 
