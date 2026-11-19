@@ -41,11 +41,25 @@ export function limitShare(cost: bigint, monthlyUsd: string): { month: string; f
 export type ChatResult = { task: string; side: Side; passed: boolean; cost: bigint; month: bigint; stopped?: string | null };
 export type SideTotal = { passed: number; tasks: number; cost: bigint; month: bigint };
 
-/** Why a run must stop after these requests: one that failed (a refusal, a limit), or one on a model with no list price, which would count as $0. Null when neither. */
+/**
+ * Why a run must stop after these requests (one reply's, or one chat's): the reply ended in a failed request (a refusal, a limit), or a
+ * request was on a model with no list price, which would count as $0. Null when neither. A failure that a later request followed, as when
+ * OpenCode retried after a dropped connection (19 Nov), does not stop the run.
+ */
 export function stopReason(entries: readonly { model: string; error: unknown; priced: boolean }[]): string | null {
-  const failed = entries.find(entry => entry.error), unpriced = entries.find(entry => !entry.priced);
+  const failed = entries.at(-1)?.error ? entries.at(-1) : undefined, unpriced = entries.find(entry => !entry.priced);
   if (failed) return `a request failed: ${JSON.stringify(failed.error).slice(0, 300)}`;
   return unpriced ? `${unpriced.model} has no list price, so a request on it would count as $0` : null;
+}
+
+/**
+ * Whether a run may start one more task within `limit`, the next task taken to cost as much as the dearest so far. `spent` holds one amount
+ * a task (all its sides together): dollars, or a share of the month. Checking whole tasks means no task is left half run, which would
+ * spend money on chats the table cannot compare (on 19 Nov a check per chat started such a chat on Ollama).
+ */
+export function nextFits(spent: readonly bigint[], limit: bigint): boolean {
+  const total = spent.reduce((sum, one) => sum + one, 0n), dearest = spent.reduce((most, one) => (one > most ? one : most), 0n);
+  return total + dearest <= limit;
 }
 
 /** The chats a fair table can use: stopped chats are left out, then only the tasks that every side present finished. A task finished twice on one side is refused. */
@@ -78,8 +92,8 @@ export function sideTotals(chats: ChatResult[]): Map<Side, SideTotal> {
 /** Dollars to four decimals, rounded half up. */
 const dollars = (cost: bigint) => { const units = (cost + 50_000_000n) / 100_000_000n; return `$${units / 10_000n}.${(units % 10_000n).toString().padStart(4, '0')}`; };
 
-/** The result table in Markdown: one column for each side that ran. */
-export function table(totals: Map<Side, SideTotal>): string {
+/** The result table in Markdown: one column for each side that ran. `limits: false` leaves out the limit rows, for a provider billed per token. */
+export function table(totals: Map<Side, SideTotal>, { limits = true }: { limits?: boolean } = {}): string {
   const sides = [...totals.keys()], off = totals.get('off');
   const row = (name: string, cell: (side: Side) => string) => `| ${name} | ${sides.map(cell).join(' | ')} |`;
   // A side that passed fewer tasks than Off did less work, so its saving is marked rather than shown as a plain saving.
@@ -95,8 +109,10 @@ export function table(totals: Map<Side, SideTotal>): string {
     row('Tasks passed', side => `${totals.get(side)!.passed} of ${totals.get(side)!.tasks}`),
     row('Cost at list price', side => dollars(totals.get(side)!.cost)),
     // The limit shares are list cost over Go's published monthly limits, not a reading of Go's own meter.
-    row('5-hour limit used (estimated)', side => `${shares(totals.get(side)!.month).fiveHour}%`),
-    row('Weekly limit used (estimated)', side => `${shares(totals.get(side)!.month).week}%`),
+    ...(limits ? [
+      row('5-hour limit used (estimated)', side => `${shares(totals.get(side)!.month).fiveHour}%`),
+      row('Weekly limit used (estimated)', side => `${shares(totals.get(side)!.month).week}%`),
+    ] : []),
     row('Saved, against Off', saved),
   ].join('\n');
 }

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProject, permissionAnswer, resetFolder, TEST_CONFIG } from '../scripts/bench/folder.js';
 import { formatUsd, parseUsd } from '../src/costs.js';
-import { commonChats, limitShare, monthShare, requestCost, sideTotals, stopReason, table, type ChatResult, type Cost } from '../scripts/bench/lib.js';
+import { commonChats, limitShare, monthShare, nextFits, requestCost, sideTotals, stopReason, table, type ChatResult, type Cost } from '../scripts/bench/lib.js';
 import { restoreSettings } from '../scripts/bench/relay-settings.js';
 
 // The proof test's exercises (scripts/bench/tasks): Exercism's Python exercises, as Aider's polyglot benchmark chose them.
@@ -65,6 +65,20 @@ test('a side that passed as many tasks as Off shows its saving unmarked', () => 
   assert.ok(printed.includes('| Saved, against Off | - | 90.0% |'), printed);
 });
 
+test('a table for a provider billed per token, such as Ollama Cloud, has no limit rows', () => {
+  const printed = table(sideTotals([chat('wordy', 'off', true, '0.1'), chat('wordy', 'on-one', true, '0.04')]), { limits: false });
+  assert.ok(printed.includes('| Cost at list price | $0.1000 | $0.0400 |'), printed);
+  assert.ok(printed.includes('| Saved, against Off | - | 60.0% |'), printed);
+  assert.doesNotMatch(printed, /limit used/);
+});
+
+test('one more task starts only when it fits the limit, taken to cost as much as the dearest task so far, so no task is left half run', () => {
+  assert.equal(nextFits([], parseUsd('2')), true);
+  assert.equal(nextFits([parseUsd('0.5'), parseUsd('0.7')], parseUsd('2')), true);    // 1.2 spent, 0.7 more: 1.9
+  assert.equal(nextFits([parseUsd('0.5'), parseUsd('0.8')], parseUsd('2')), false);   // 1.3 spent, 0.8 more: 2.1
+  assert.equal(nextFits([parseUsd('1'), parseUsd('0.5')], parseUsd('2.5')), true);    // exactly at the limit still fits
+});
+
 test('a stopped chat is left out, and the table compares only the tasks every side finished', () => {
   const { kept, dropped } = commonChats([
     chat('wordy', 'off', true, '0.1'), chat('wordy', 'on-one', true, '0.05'),
@@ -76,6 +90,12 @@ test('a stopped chat is left out, and the table compares only the tasks every si
 
 test('a task that ran twice on one side is refused rather than counted twice', () => {
   assert.throws(() => commonChats([chat('wordy', 'off', true, '0.1'), chat('wordy', 'off', false, '0.1')]), /wordy ran twice on off/);
+});
+
+test('a run does not stop when a request failed and the reply went on, as after a dropped connection that OpenCode retried', () => {
+  const ok = { model: 'opencode-go/kimi-k3.1-pro', error: null, priced: true }, dropped = { ...ok, error: { type: 'provider.transport', message: 'Connection lost while reading the response' } };
+  assert.equal(stopReason([ok, dropped, ok]), null);
+  assert.match(stopReason([ok, dropped]) ?? '', /a request failed: .*Connection lost/);
 });
 
 test('a run stops at a failed request, or at a request on a model with no price', () => {

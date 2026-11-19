@@ -1,8 +1,10 @@
 // The proof test's runner (design: docs/superpowers/specs/2026-11-18-relay-proof-design.md; plan: docs/superpowers/plans/2026-11-19-relay-proof-test.md).
-// THIS SENDS REAL REQUESTS through the owner's own OpenCode to OpenCode Go models, and uses their Go allowance. Run it only with the owner's yes.
+// THIS SENDS REAL REQUESTS through the owner's own OpenCode, to OpenCode Go models (using their Go allowance) or to Ollama Cloud models (billed
+// per token to their Ollama account). Run it only with the owner's yes.
 // It works in one test folder that the owner has opened in Desktop (RELAY_BENCH_DIR, by default relay-bench in the home folder), and sends the
 // service no request about any other folder. It sets Relay's settings for each side and puts back the ones it found, even after an error.
-// Usage: npx tsx scripts/bench/run.ts --plan go|go-plus --out <folder> [--tasks a,b] [--sides off,on-one,on-two,cheap] [--budget <percent of a 5-hour window>] [--check]
+// Usage: npx tsx scripts/bench/run.ts --plan go|go-plus|ollama --out <folder> [--tasks a,b] [--sides off,on-one,on-two,cheap] [--check]
+//   [--budget <percent of a 5-hour window>, on Go; default 100] [--cap <US dollars>, on Ollama; default 2]
 import { execFile as execFileCallback } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -10,19 +12,22 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { OpenCode } from '@opencode/client/promise';
-import { formatUsd, parseUsd } from '../../src/costs.js';
+import { formatUsd, parseUsd, usdString } from '../../src/costs.js';
 import { isProject, permissionAnswer, resetFolder } from './folder.js';
-import { MONTH, monthShare, requestCost, shares, SIDES, stopReason, type Cost, type Side, type Tokens } from './lib.js';
+import { MONTH, monthShare, nextFits, requestCost, shares, SIDES, stopReason, type Cost, type Side, type Tokens } from './lib.js';
 import { restoreSettings } from './relay-settings.js';
 
 const execFile = promisify(execFileCallback);
-const { values: flags } = parseArgs({ options: { plan: { type: 'string' }, out: { type: 'string' }, tasks: { type: 'string' }, sides: { type: 'string' }, check: { type: 'boolean' }, budget: { type: 'string' } } });
+const { values: flags } = parseArgs({ options: { plan: { type: 'string' }, out: { type: 'string' }, tasks: { type: 'string' }, sides: { type: 'string' }, check: { type: 'boolean' }, budget: { type: 'string' }, cap: { type: 'string' } } });
 const plan = flags.plan;
-if (plan !== 'go' && plan !== 'go-plus') throw new Error('Say which Go plan: --plan go or --plan go-plus');
+if (plan !== 'go' && plan !== 'go-plus' && plan !== 'ollama') throw new Error('Say which plan: --plan go, --plan go-plus or --plan ollama');
 if (!flags.out) throw new Error('Say where the results go: --out <folder>');
 const out = flags.out;
-const budget = BigInt(flags.budget ?? '100');   // percent of one 5-hour window this run may use
+const onGo = plan !== 'ollama';
+const budget = BigInt(flags.budget ?? '100');   // on Go: percent of one 5-hour window this run may use
 if (budget <= 0n || budget > 100n) throw new Error('--budget is a percent of one 5-hour window, 1 to 100');
+const cap = parseUsd(flags.cap ?? '2');   // on Ollama: US dollars this run may spend (the owner, 18 Nov: "upto 2$")
+if (cap <= 0n || cap > parseUsd('2')) throw new Error('--cap is in US dollars, more than 0 and at most 2');
 const folder = process.env.RELAY_BENCH_DIR ?? join(homedir(), 'relay-bench'), python = process.env.RELAY_BENCH_PYTHON ?? 'python';
 const taskRoot = fileURLToPath(new URL('./tasks/', import.meta.url));
 const TASKS = ['affine-cipher', 'variable-length-quantity', 'wordy', 'book-store', 'bowling', 'forth'];
@@ -33,9 +38,16 @@ for (const side of sides) if (!SIDES.includes(side)) throw new Error(`Unknown si
 
 type Choice = { providerID: string; id: string; variant: null };
 const choice = (providerID: string, id: string): Choice => ({ providerID, id, variant: null });
-const STRONG = choice('opencode-go', 'kimi-k3.1-pro'), CHEAP = choice('opencode-go', 'glm-5.3-flash'), DECIDER = choice('opencode', 'jev-1.13-free');
-// Each model's monthly limit on Go, from https://opencode.ai/inference/go/v1/models (`go.monthly_usage`, read on 18 Nov 2026).
-const MONTHLY: Record<'go' | 'go-plus', Record<string, string>> = { go: { 'kimi-k3.1-pro': '15', 'glm-5.3-flash': '60' }, 'go-plus': { 'kimi-k3.1-pro': '60', 'glm-5.3-flash': '180' } };
+// Each Go model's monthly limit, from https://opencode.ai/inference/go/v1/models (`go.monthly_usage`, read on 18 Nov 2026). Ollama Cloud has
+// no such limit: it bills each token to the owner's account.
+const PLANS: Record<'go' | 'go-plus' | 'ollama', { strong: Choice; cheap: Choice; monthly: Record<string, string> | null }> = {
+  go: { strong: choice('opencode-go', 'kimi-k3.1-pro'), cheap: choice('opencode-go', 'glm-5.3-flash'), monthly: { 'kimi-k3.1-pro': '15', 'glm-5.3-flash': '60' } },
+  'go-plus': { strong: choice('opencode-go', 'kimi-k3.1-pro'), cheap: choice('opencode-go', 'glm-5.3-flash'), monthly: { 'kimi-k3.1-pro': '60', 'glm-5.3-flash': '180' } },
+  // GLM-5.3 and its Flash: a big and a small model of one family, about nine times apart in price ($1.40/$4.40 and $0.15/$0.50 a million
+  // tokens on 19 Nov 2026), a smaller gap than Go's pair has. By the Go run's tokens, six tasks on three sides should fit a $2 cap.
+  ollama: { strong: choice('ollama-cloud', 'glm-5.3'), cheap: choice('ollama-cloud', 'glm-5.3-flash'), monthly: null },
+};
+const { strong: STRONG, cheap: CHEAP, monthly: MONTHLY } = PLANS[plan], DECIDER = choice('opencode', 'jev-1.13-free');
 const SETTINGS = {
   'on-one': { plan: [STRONG], execute: [CHEAP], review: [STRONG] },
   'on-two': { plan: [STRONG], execute: [{ ...CHEAP, useFor: 'small edits in one or two files' }, { ...STRONG, useFor: 'bigger changes across several files' }], review: [STRONG] },
@@ -122,12 +134,19 @@ async function untilIdle(sessionID: string, before: number): Promise<string | nu
 function entryOf(entry: any, prices: Map<string, Cost>): Entry {
   const model = `${entry.model?.providerID}/${entry.model?.id}`, t = entry.tokens ?? {};
   const tokens: Tokens = { input: t.input ?? 0, output: t.output ?? 0, reasoning: t.reasoning ?? 0, cache: { read: t.cache?.read ?? 0, write: t.cache?.write ?? 0 } };
-  const price = prices.get(model), cost = price ? requestCost(tokens, price) : 0n, monthly = MONTHLY[plan as 'go' | 'go-plus'][entry.model?.id];
-  const priced = price !== undefined && price.inputPerMillion !== null && price.outputPerMillion !== null && monthly !== undefined;
+  const price = prices.get(model), cost = price ? requestCost(tokens, price) : 0n, monthly = MONTHLY?.[entry.model?.id];
+  const priced = price !== undefined && price.inputPerMillion !== null && price.outputPerMillion !== null && (MONTHLY === null || monthly !== undefined);
   return { model, agent: entry.agent, tokens, openCodeCost: entry.cost ?? 0, cost: formatUsd(cost), month: (monthly ? monthShare(cost, monthly) : 0n).toString(), priced, created: entry.time?.created, completed: entry.time?.completed ?? null, error: entry.error ?? null };
 }
 
-async function runChat(task: string, side: Side, prices: Map<string, Cost>): Promise<Chat> {
+/** What a chat cost in dollars: its list cost, or what OpenCode recorded when that is more (OpenCode records a cost on Ollama Cloud, and 0 on Go). */
+function dollarsOf(entries: readonly Entry[]): bigint {
+  const list = entries.reduce((sum, entry) => sum + parseUsd(entry.cost), 0n), recorded = entries.reduce((sum, entry) => sum + parseUsd(usdString(entry.openCodeCost) ?? '0'), 0n);
+  return list > recorded ? list : recorded;
+}
+
+/** `left` is what the run may still spend, in dollars, on a provider billed per token: the chat stops after the message that passes it. */
+async function runChat(task: string, side: Side, prices: Map<string, Cost>, left: bigint | null): Promise<Chat> {
   const module = task.replaceAll('-', '_'), source = join(taskRoot, task), began = Date.now();
   resetFolder(folder, { 'instructions.md': readFileSync(join(source, 'instructions.md'), 'utf8'), [`${module}.py`]: readFileSync(join(source, `${module}.py`), 'utf8') });
   const on = side === 'on-one' || side === 'on-two';
@@ -146,7 +165,9 @@ async function runChat(task: string, side: Side, prices: Map<string, Cost>): Pro
       await client.session.prompt({ sessionID, text });
       stopped = await untilIdle(sessionID, before);
       // A refused or failed request (a limit, say), or one on a model with no price, ends the chat at once: no further message is sent.
-      stopped ??= stopReason(items(await client.session.context({ sessionID })).slice(before).filter(entry => entry.type === 'assistant').map(entry => entryOf(entry, prices)));
+      const context = items(await client.session.context({ sessionID })), answers = (from: number) => context.slice(from).filter(entry => entry.type === 'assistant').map(entry => entryOf(entry, prices));
+      stopped ??= stopReason(answers(before));
+      if (!stopped && left !== null && dollarsOf(answers(0)) > left) stopped = `the run passed its cap of $${formatUsd(cap)}`;
       if (stopped) break;
     }
   } finally {
@@ -168,7 +189,7 @@ async function run(): Promise<void> {
   const before = await rpc.getRelay({}, options);
   const listed = items((await rpc.listModels({}, options)).models);
   const prices = new Map<string, Cost>(listed.filter(model => [STRONG, CHEAP].some(wanted => model.providerID === wanted.providerID && model.id === wanted.id)).map(model => [`${model.providerID}/${model.id}`, model.cost]));
-  const results = { startedAt: new Date().toISOString(), opencodeVersion, plan, folder, models: { strong: `${STRONG.providerID}/${STRONG.id}`, cheap: `${CHEAP.providerID}/${CHEAP.id}`, decider: `${DECIDER.providerID}/${DECIDER.id}` },
+  const results = { startedAt: new Date().toISOString(), opencodeVersion, plan, ...(onGo ? { budgetPercentOfFiveHours: Number(budget) } : { capUsd: formatUsd(cap) }), folder, models: { strong: `${STRONG.providerID}/${STRONG.id}`, cheap: `${CHEAP.providerID}/${CHEAP.id}`, decider: `${DECIDER.providerID}/${DECIDER.id}` },
     prices: Object.fromEntries(prices), settingsBefore: before.settings, stoppedBecause: null as string | null, chats: [] as Chat[] };
   const file = join(out, 'results.json'), save = () => writeFileSync(file, JSON.stringify(results, null, 2));
   save();   // settingsBefore is on disk before any change, so the settings can be put back by hand if everything else fails
@@ -176,16 +197,25 @@ async function run(): Promise<void> {
   // Ctrl+C would skip the `finally` below; this puts the settings back first.
   process.once('SIGINT', () => { results.stoppedBecause = 'stopped by Ctrl+C'; void restore().finally(() => process.exit(130)); });
   const monthOf = (chat: Chat) => chat.entries.reduce((sum, entry) => sum + BigInt(entry.month), 0n);
+  // On Go a run may use `--budget` percent of one 5-hour window (a fifth of the month); on Ollama it may spend `--cap` dollars.
+  const amountOf = (chat: Chat) => (onGo ? monthOf(chat) : dollarsOf(chat.entries)), limit = onGo ? (budget * MONTH) / 500n : cap;
+  const used = () => results.chats.reduce((sum, chat) => sum + amountOf(chat), 0n);
   try {
-    outer: for (const task of tasks) for (const side of sides) {
-      // This run may use `--budget` percent of one 5-hour window (default 100; a 5-hour window is a fifth of the month). The next chat is taken to cost as much as the dearest chat so far.
-      const spent = results.chats.reduce((sum, chat) => sum + monthOf(chat), 0n), next = results.chats.reduce((most, chat) => (monthOf(chat) > most ? monthOf(chat) : most), 0n);
-      if ((spent + next) * 5n * 100n > budget * MONTH) { results.stoppedBecause = `the next chat could pass the budget of ${budget}% of a 5-hour window (${shares(spent).fiveHour}% used)`; break outer; }
-      const chat = await runChat(task, side, prices);
-      results.chats.push(chat); save();
-      const cost = chat.entries.reduce((sum, entry) => sum + parseUsd(entry.cost), 0n);
-      console.log(`${task} ${side}: ${chat.passed ? 'passed' : 'failed'}; ${chat.entries.length} requests; $${formatUsd(cost)} at list price; ${shares(monthOf(chat)).fiveHour}% of a 5-hour window; ${chat.seconds} s${chat.stopped ? `; STOPPED: ${chat.stopped}` : ''}`);
-      if (chat.stopped) { results.stoppedBecause = `${task} ${side}: ${chat.stopped}`; break outer; }
+    outer: for (const task of tasks) {
+      // A task starts only when all its sides should fit, so none is left half run: the next task is taken to cost as much as the dearest so far.
+      const done = [...new Set(results.chats.map(chat => chat.task))];
+      if (!nextFits(done.map(name => results.chats.filter(chat => chat.task === name).reduce((sum, chat) => sum + amountOf(chat), 0n)), limit)) {
+        results.stoppedBecause = onGo ? `the next task could pass the budget of ${budget}% of a 5-hour window (${shares(used()).fiveHour}% used)` : `the next task could pass the cap of $${formatUsd(cap)} ($${formatUsd(used())} spent)`;
+        break;
+      }
+      for (const side of sides) {
+        const chat = await runChat(task, side, prices, onGo ? null : cap - used());
+        results.chats.push(chat); save();
+        const cost = chat.entries.reduce((sum, entry) => sum + parseUsd(entry.cost), 0n);
+        const share = onGo ? `${shares(monthOf(chat)).fiveHour}% of a 5-hour window` : `$${formatUsd(dollarsOf(chat.entries))} billed (the more of list price and OpenCode's record); $${formatUsd(used())} spent so far`;
+        console.log(`${task} ${side}: ${chat.passed ? 'passed' : 'failed'}; ${chat.entries.length} requests; $${formatUsd(cost)} at list price; ${share}; ${chat.seconds} s${chat.stopped ? `; STOPPED: ${chat.stopped}` : ''}`);
+        if (chat.stopped) { results.stoppedBecause = `${task} ${side}: ${chat.stopped}`; break outer; }
+      }
     }
   } finally {
     await restore();
