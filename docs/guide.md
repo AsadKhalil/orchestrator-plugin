@@ -57,6 +57,25 @@ Add models to **Plan**, **Execute** and **Review**: press **+ Add a model** unde
 - **Change the decider** opens it again, and × removes the decider. Until you choose one, the panel and the pill warn you: without a decider, Relay switches nothing.
 - Type a sample message in the test box and press **Try** to see what Relay would pick.
 
+### Usage by model
+
+**Usage by model** in the panel adds up every message Relay placed, with `/relay` or in a chat with Relay on, for each model and effort. It counts from the version that brought it onward.
+
+- **Requests and tokens:** the requests the replies made, and their tokens: in, out, reasoning, read from a cache and written to a cache.
+- **Cost by price:** each kind of token times its price for a million tokens, and the total. Reasoning is priced as output. The prices are OpenCode's own when it lists them, which is what you pay; otherwise Artificial Analysis's, marked `*`, once you have saved a key (below).
+- **OpenCode's own cost**, when it is more than $0.
+
+In OpenCode's terminal app, `/relay-stats` shows the same table in a dialog.
+
+### Prices from Artificial Analysis
+
+OpenCode lists no price for some models, such as Claude through a subscription login. For those, Relay can take each model's prices (in, out, cache read and cache write) and its intelligence index from Artificial Analysis, with a free key from [artificialanalysis.ai](https://artificialanalysis.ai/). Paste the key under **Prices from Artificial Analysis** in the panel and press Save; Remove deletes it.
+
+- Relay downloads Artificial Analysis's free model list at most once a day. That is four of the 100 requests a day the free key allows.
+- With a key saved, the model tables show Artificial Analysis's own index.
+- Artificial Analysis lists one price for each model, so a higher price for long chats is not there.
+- Its data is credited wherever Relay shows it.
+
 ### Recent choices
 
 <img src="images/recent-choices.png" width="380" alt="Recent choices, with what each reply took">
@@ -78,6 +97,7 @@ The screenshots show the panel with example settings and example rows. The model
 | `/relay <message>` | Relay picks the mode and the model for this one message, switches the chat, and sends it. |
 | `/relay on` | Every message you send in this chat goes through Relay, without typing `/relay`. |
 | `/relay off` | This chat goes back to normal. |
+| `/relay-stats` | In the terminal app: shows Usage by model in a dialog. |
 
 - In Desktop, the **Relay pill** above the chat box shows whether Relay is on for that chat. Click it to turn Relay on or off there, and to see the last choice. With no decider chosen it reads **Relay on · no decider**, and its menu opens the Relay panel.
 - OpenCode shows a "Switched to …" line in the chat when Relay changes the model, and Desktop's model picker follows Relay's choice.

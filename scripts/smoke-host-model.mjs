@@ -258,8 +258,21 @@ try {
   // The whole reply adds up both requests (each read 62,000 tokens, 61,000 of them from a cache, and wrote 5), at $4 / $0.20 / $20 for a million.
   assert.deepEqual([tooled.reply.model, tooled.reply.total, tooled.reply.prices], ['smoke/model-big', { input: 2000, output: 10, reasoning: 0, cacheRead: 122_000, cacheWrite: 0, costUsd: '0.0326' }, { inputPerMillion: '4', outputPerMillion: '20', cacheReadPerMillion: '0.2', cacheWritePerMillion: '5' }]);
 
+  // Usage by model adds up every reply Relay counted. The cheaper model answered one message: 5,000 tokens in, 5 out and 15,000 from a cache.
+  const usage = await rpc().getRelayUsage({}, options);
+  note('usage by model', usage.rows.map(row => [row.model, row.messages, row.requests, row.byPrice, row.pricesFrom]));
+  assert.deepEqual(usage.rows.find(row => row.model === 'smoke/model-cheap'), {
+    model: 'smoke/model-cheap', messages: 1, requests: 1, input: 5000, output: 5, reasoning: 0, cacheRead: 15_000, cacheWrite: 0, openCodeUsd: '0.01155',
+    byPrice: { input: '0.01', output: '0.00005', cacheRead: '0.0015', cacheWrite: '0' }, prices: { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' }, pricesFrom: 'opencode',
+  });
+  assert.ok((usage.rows.find(row => row.model === 'smoke/model-big')?.requests ?? 0) >= 5, 'the dearer model answered at least five requests');
+  // The terminal part: the host lists Relay with it, so /relay-stats is there in the terminal app.
+  const listed = (await server.client.plugin.list({ location: options.location })).data.find(item => JSON.stringify(item).includes('relay-opencode'));
+  note('plugin features', listed?.features);
+  assert.equal(listed?.features?.tui, true, `the host does not list Relay's terminal part: ${JSON.stringify(listed)}`);
+
   const version = (await execFile(cli, ['--version'], { timeout: 20_000, env: isolated })).stdout.trim();
-  console.log(`PASS: on stock ${version} (${process.platform}) the packed plugin loaded from node_modules; /relay with no decider sent one message to the chat's own mock model and recorded it and what its reply took; /relay on kept the switch across a restart and placed each plain message once; /relay off stopped it; with a mock decider, /relay switched the agent and the model, a chat too long for a model was not offered it, a step down that did not pay left the chat on its model, and each record says what the reply took: the model that answered, every request added up, and that model's listed prices`);
+  console.log(`PASS: on stock ${version} (${process.platform}) the packed plugin loaded from node_modules; /relay with no decider sent one message to the chat's own mock model and recorded it and what its reply took; /relay on kept the switch across a restart and placed each plain message once; /relay off stopped it; with a mock decider, /relay switched the agent and the model, a chat too long for a model was not offered it, a step down that did not pay left the chat on its model, and each record says what the reply took: the model that answered, every request added up, and that model's listed prices; usage by model added up every reply, and the host lists Relay's terminal part`);
   for (const line of observed) console.log(`OBSERVED ${line}`);
   console.log('LIMIT: mock models and a mock decider only, so the tokens, prices and cache reads are what the mock reported, not what a provider charged; no real cache, no helper, and no Desktop panel was exercised');
 } catch (error) {
