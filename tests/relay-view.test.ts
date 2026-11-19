@@ -208,8 +208,15 @@ test('usage by model: the text /relay-stats shows, with the credit Artificial An
     '  cache read 57,144 x $0.3 a million = $0.0171432',
     '  cache write 600 x $3.75 a million = $0.00225',
     '',
-    '* at Artificial Analysis prices',
+    '* at Artificial Analysis prices, all or in part',
     'Prices and index: Artificial Analysis (artificialanalysis.ai)',
   ].join('\n'));
   assert.equal(usageText({ since: null, rows: [], credit: null }), 'No reply counted yet. Relay counts every message it places: /relay, or any message in a chat with Relay on.');
+});
+
+test('a cost line says tokens x price only when that is exactly the cost', () => {
+  // Three replies of 1,000,000 tokens in: one before any price, one at $3 and one at $6 a million.
+  const mixed = usageCells(usageRow('claude-agent/sonnet', { input: 3_000_000, byPrice: { input: '9', output: null, cacheRead: null, cacheWrite: null }, prices: { inputPerMillion: '6', outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null }, pricesFrom: 'artificial-analysis' }));
+  assert.deepEqual(mixed.byPrice[0], "in 3,000,000: $9 by each reply's own price (the last was $6 a million)");
+  assert.equal(usageCells(glm).byPrice[0], 'in 11,524 x $3 a million = $0.034572', 'exact, so said as a product');
 });

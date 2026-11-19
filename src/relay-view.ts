@@ -2,7 +2,7 @@ import type { ModelCostView } from './inventory.js';
 import type { Decision, Prices, Reply, UsageRow } from './relay-store.js';
 import { modeLabel } from './router.js';
 import { MAX_CHARS, MAX_FILE_NAMES } from './decider.js';
-import { formatUsd, parseUsd } from './costs.js';
+import { costOf, formatUsd, parseUsd } from './costs.js';
 import type { ModelChoice } from './settings.js';
 
 // What the Modes tab says in words. Pure, so it runs under node:test; the panel bundles it, so nothing here may import from `node:`.
@@ -107,9 +107,10 @@ export function usageCells(row: UsageRow) {
   const hash = row.model.lastIndexOf('#'), costs = kinds.flatMap(([kind]) => { const usd = row.byPrice[kind]; return usd === null ? [] : [parseUsd(usd)]; });
   const byPrice = !costs.length ? [] : kinds.flatMap(([kind, label, price]) => {
     const tokens = kind === 'output' ? `${amount(row.output)}${row.reasoning > 0 ? ` + ${amount(row.reasoning)} reasoning` : ''}` : amount(row[kind]);
-    const usd = row.byPrice[kind], per = row.prices?.[price] ?? null;
-    if (usd !== null && per !== null) return [`${label} ${tokens} x $${per} a million = $${usd}`];
-    return row[kind] > 0 || (kind === 'output' && row.reasoning > 0) ? [`${label} ${tokens}: no price listed`] : [];
+    const usd = row.byPrice[kind], per = row.prices?.[price] ?? null, count = kind === 'output' ? row.output + row.reasoning : row[kind];
+    if (usd !== null && per !== null && costOf(count, per) === parseUsd(usd)) return [`${label} ${tokens} x $${per} a million = $${usd}`];
+    if (usd !== null) return [`${label} ${tokens}: $${usd} by each reply's own price${per === null ? '' : ` (the last was $${per} a million)`}`];
+    return count > 0 ? [`${label} ${tokens}: no price listed`] : [];
   });
   return {
     model: hash < 0 ? row.model : row.model.slice(0, hash), effort: hash < 0 ? '-' : row.model.slice(hash + 1), requests: amount(row.requests), input: amount(row.input), output: amount(row.output),
@@ -125,7 +126,7 @@ export function usageText(view: { since: string | null; rows: readonly UsageRow[
   const widths = table[0].map((_, column) => Math.max(...table.map(line => line[column].length)));
   const lines = table.map(line => line.map((cell, column) => column < 2 ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join('  ').trimEnd());
   const blocks = view.rows.flatMap((row, at) => cells[at].byPrice.length ? [`${row.model}, cost by price:`, ...cells[at].byPrice.map(line => `  ${line}`)] : []);
-  const footer = [...(view.rows.some(row => row.pricesFrom === 'artificial-analysis') ? ['* at Artificial Analysis prices'] : []), ...(view.credit ? [view.credit] : [])];
+  const footer = [...(view.rows.some(row => row.pricesFrom === 'artificial-analysis') ? ['* at Artificial Analysis prices, all or in part'] : []), ...(view.credit ? [view.credit] : [])];
   const since = view.since ? `, since ${view.since.slice(0, 10)} ${view.since.slice(11, 16)} UTC` : '';
   return [`Relay: usage by model${since}`, '', ...lines, ...(blocks.length ? ['', ...blocks] : []), ...(footer.length ? ['', ...footer] : [])].join('\n');
 }

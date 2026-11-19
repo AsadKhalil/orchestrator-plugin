@@ -276,7 +276,7 @@ export default Plugin.define({
                     <br />in {cell.input} · out {cell.output} · cache read {cell.cacheRead} · cache write {cell.cacheWrite}
                     <For each={cell.byPrice}>{line => <><br />{line}</>}</For>
                   </li>; }}</For></ol>
-                  <span class="rl-hint">{usageView()!.since ? `Since ${when(usageView()!.since!)}.` : ''}{usageView()!.rows.some(row => row.pricesFrom === 'artificial-analysis') ? ' * at Artificial Analysis prices.' : ''}</span>
+                  <span class="rl-hint">{usageView()!.since ? `Since ${when(usageView()!.since!)}.` : ''}{usageView()!.rows.some(row => row.pricesFrom === 'artificial-analysis') ? ' * at Artificial Analysis prices, all or in part.' : ''}</span>
                 </Show>
                 <Show when={usageView()?.credit}>{credit => <span class="rl-hint">{credit()}</span>}</Show>
               </Acc>

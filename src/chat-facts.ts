@@ -40,7 +40,9 @@ export function replyOf(messages: unknown, messageID: string, models: readonly (
   // shortcut: the prices for the size of the first request. Later requests of a long reply can cross a price step; the host's own cost below counts each request at its own step.
   const prices = listed ? pricesAt(listed.cost, read.fresh + read.cached) : null, own = prices && listedPrice(prices) ? prices : null;
   const effort = hostVariant(typeof variant === 'string' ? variant : undefined);
-  const lent = !own && named && borrowed ? aaFor({ providerID, id, name: listed?.name ?? id, variant: effort }, borrowed)?.prices ?? null : null;
+  // Only a model the list was read for and shows no price at all borrows one: $0 can mean free, and an unread list says nothing.
+  const unlisted = models !== null && (!prices || Object.values(prices).every(price => price === null));
+  const lent = unlisted && named && borrowed ? aaFor({ providerID, id, name: listed?.name ?? id, variant: effort }, borrowed)?.prices ?? null : null;
   return {
     requests: answers.length, fresh: read.fresh, cached: read.cached, costUsd: usdString(first.cost), seconds: typeof asked === 'number' && typeof word === 'number' && word >= asked ? Math.round((word - asked) / 100) / 10 : null,
     model: named ? modelName({ providerID, id, variant: effort }) : null,

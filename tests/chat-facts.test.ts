@@ -41,12 +41,15 @@ test("a reply on a model OpenCode lists no price for is priced by Artificial Ana
   const messages = [user('m1', 1000), answer('a1', 'sonnet', 1047, { input: 900, read: 9000, write: 50, output: 120 }, { model: { id: 'sonnet', providerID: 'claude-agent', variant: 'high' } })];
   const unpriced = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null }, api = { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' };
   const own = { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' };
-  const listing = (cost: typeof unpriced | typeof own) => [{ providerID: 'claude-agent', id: 'sonnet', name: 'Claude Sonnet', cost: { ...cost, tiered: false, steps: [] } }];
+  const listing = (cost: Record<'inputPerMillion' | 'outputPerMillion' | 'cacheReadPerMillion' | 'cacheWritePerMillion', string | null>) => [{ providerID: 'claude-agent', id: 'sonnet', name: 'Claude Sonnet', cost: { ...cost, tiered: false, steps: [] } }];
   const borrowed = [{ slug: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (Max)', creator: 'Anthropic', released: '2026-09-28', index: 54.5, prices: api }, { slug: 'claude-sonnet-5-5-high', name: 'Claude Sonnet 5.5 (High)', creator: 'Anthropic', released: '2026-09-28', index: 41.5, prices: api }];
   const priced = (models: ReturnType<typeof listing> | null, lent: typeof borrowed | null) => { const reply = replyOf(messages, 'm1', models, lent); return [reply?.model, reply?.prices, reply?.pricesFrom]; };
   assert.deepEqual(priced(listing(unpriced), borrowed), ['claude-agent/sonnet#high', api, 'artificial-analysis'], 'the subscription login lists no price');
   assert.deepEqual(priced(listing(own), borrowed), ['claude-agent/sonnet#high', own, 'opencode'], "OpenCode's price is what is paid");
-  assert.deepEqual(priced(null, borrowed), ['claude-agent/sonnet#high', api, 'artificial-analysis'], 'a model the list does not have');
+  assert.deepEqual(priced(null, borrowed), ['claude-agent/sonnet#high', null, null], 'the model list could not be read: nothing is borrowed');
+  assert.deepEqual(priced([], borrowed), ['claude-agent/sonnet#high', api, 'artificial-analysis'], 'a model the list does not have');
+  const free = { inputPerMillion: '0', outputPerMillion: '0', cacheReadPerMillion: '0', cacheWritePerMillion: null };
+  assert.deepEqual(priced(listing(free), borrowed), ['claude-agent/sonnet#high', free, null], 'a model listed at $0 may be free, so nothing is borrowed');
   assert.deepEqual(priced(listing(unpriced), []), ['claude-agent/sonnet#high', unpriced, null], 'no match: no price');
 });
 

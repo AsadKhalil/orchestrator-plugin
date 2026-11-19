@@ -159,3 +159,25 @@ test("a chat's switch starts off, turns on and off, is per chat, and anything bu
 });
 
 test('model names', () => { assert.equal(modelName(high), 'p/m#high'); assert.equal(modelName(judge), 'd/judge'); assert.equal(modelName(plain), 'p/m#high'); });
+
+test("an unknown cost leaves OpenCode's total as it was, and a row priced by Artificial Analysis once keeps its mark", async () => {
+  const db = store(), api = { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' };
+  for (const id of ['msg-1', 'msg-2', 'msg-3']) await recordDecision(db, placed(id, id));
+  await saveReplies(db, 'ses-1', new Map([['msg-1', { ...reply, total: { ...reply.total, costUsd: '1' }, prices: api, pricesFrom: 'artificial-analysis' as const }]]));
+  await saveReplies(db, 'ses-1', new Map([['msg-2', { ...reply, total: { ...reply.total, costUsd: null } }]]));
+  await saveReplies(db, 'ses-1', new Map([['msg-3', { ...reply, total: { ...reply.total, costUsd: '2' }, prices: null, pricesFrom: null }]]));
+  const [row] = (await getUsage(db)).rows;
+  assert.deepEqual([row.messages, row.openCodeUsd, row.pricesFrom, row.prices], [3, '3', 'artificial-analysis', reply.prices], 'the unknown cost adds nothing; the mark stays; the last prices that were known stay');
+});
+
+test('a reply still waiting is kept, and counted, when twenty newer records come before its chat goes idle', async () => {
+  const db = store();
+  await recordDecision(db, placed('first', 'msg-old'));
+  for (let i = 0; i < 25; i++) await recordDecision(db, { ...placed(`helper-${i}`, 'x'), kind: 'helper', messageID: null });
+  const recent = await recentDecisions(db);
+  assert.deepEqual([recent.length, recent.some(item => item.messageID === 'msg-old'), await waitingReplies(db, 'ses-1')], [20, false, ['msg-old']], 'Recent choices shows twenty; the waiting record is kept behind them');
+  await saveReplies(db, 'ses-1', new Map([['msg-old', reply]]));
+  assert.deepEqual((await getUsage(db)).rows.map(row => [row.model, row.messages]), [['p/m#high', 1]]);
+  for (let i = 0; i < 60; i++) await recordDecision(db, placed(`wait-${i}`, `msg-${i}`));
+  assert.equal((await waitingReplies(db, 'ses-1')).length, 50, 'at most thirty older waiting records stay behind the twenty newest');
+});

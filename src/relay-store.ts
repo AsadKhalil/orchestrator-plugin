@@ -32,7 +32,8 @@ const sources: readonly PriceSource[] = ['opencode', 'artificial-analysis'];
 type Kinds<T> = { input: T; output: T; cacheRead: T; cacheWrite: T };
 /**
  * The totals of one model and effort over every reply Relay counted. `byPrice` is tokens times each reply's own price, by kind (output with
- * its reasoning), and null for a kind no reply had a price for; `prices` and `pricesFrom` are the last reply's.
+ * its reasoning), and null for a kind no reply had a price for. `prices` are the last ones a reply had; `pricesFrom` is Artificial
+ * Analysis once any reply was priced by it.
  */
 export type UsageRow = { model: string; messages: number; requests: number; input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; openCodeUsd: string | null; byPrice: Kinds<string | null>; prices: Prices | null; pricesFrom: PriceSource | null };
 /** `since` is when the first reply was counted. */
@@ -44,7 +45,7 @@ export type Usage = { since: string | null; rows: UsageRow[] };
 export type Decision = { at: string; sessionID: string; kind: 'chat' | 'helper'; mode: Mode | null; confidence: number | null; fit: number | null; model: string | null; ms: number; costUsd: string | null; note: string | null; messageID: string | null; reply: Reply | null };
 export type RelayStore = { get(key: string): Promise<unknown>; set(key: string, value: RelaySettings | Decision[] | Usage | boolean): Promise<void>; compareAndSet?(key: string, expected: unknown, value: RelaySettings | Decision[]): Promise<boolean> };
 
-const SETTINGS = 'relay/settings', DECISIONS = 'relay/decisions', USAGE = 'relay/usage', KEEP = 20;
+const SETTINGS = 'relay/settings', DECISIONS = 'relay/decisions', USAGE = 'relay/usage', KEEP = 20, WAITING_KEEP = 30;
 const same = (a: ModelChoice, b: ModelChoice) => a.providerID === b.providerID && a.id === b.id && a.variant === b.variant;
 export const modelName = (choice: ModelChoice) => `${choice.providerID}/${choice.id}${choice.variant === null ? '' : `#${choice.variant}`}`;
 /**
@@ -125,7 +126,12 @@ const stored = async (store: Pick<RelayStore, 'get'>): Promise<Decision[]> => {
 /** A new record has no reply yet; one made for a message of a chat names that message. */
 export function recordDecision(store: RelayStore, decision: Omit<Decision, 'messageID' | 'reply'> & { messageID?: string | null }): Promise<void> {
   // shortcut: one stored list. Two project folders deciding in the same instant can lose one record; give each record its own key if that ever matters.
-  return serial(async () => store.set(DECISIONS, [...await stored(store), { messageID: null, ...decision, reply: null }].slice(-KEEP)));
+  return serial(async () => {
+    const all = [...await stored(store), { messageID: null, ...decision, reply: null }];
+    // A record still waiting for its reply stays behind the newest twenty (thirty such at most), so a long reply is still counted.
+    const waiting = all.slice(0, -KEEP).filter(item => item.messageID !== null && item.reply === null).slice(-WAITING_KEEP);
+    await store.set(DECISIONS, [...waiting, ...all.slice(-KEEP)]);
+  });
 }
 const waits = (item: Decision, sessionID: string): item is Decision & { messageID: string } => item.sessionID === sessionID && item.messageID !== null && item.reply === null;
 /** The messages of one chat whose records still wait for what the reply took. */
@@ -134,7 +140,7 @@ export function waitingReplies(store: Pick<RelayStore, 'get'>, sessionID: string
 }
 /** Keeps what the replies took, by message, with the records of one chat that still wait for it. A reply that was kept once is not replaced. */
 // shortcut: a record whose reply can never be read (an answer that was stopped, a message that was taken back or compacted away before
-// its reply was read) waits until it leaves the list of 20, so its chat is read once more each time it goes idle.
+// its reply was read) waits until thirty newer waiting records push it out, so its chat is read once more each time it goes idle.
 // Each reply kept here is also added to the totals of its model and effort. The record is written first, so a reply is counted at most once.
 // shortcut: two OpenCode processes that keep the same reply in the same instant can each count it; give each count a key of its own if that ever matters.
 export function saveReplies(store: RelayStore, sessionID: string, replies: ReadonlyMap<string, Reply>, now = Date.now()): Promise<void> {
@@ -166,8 +172,9 @@ function counted(usage: Usage, replies: readonly Reply[], now: number): Usage {
     const cost = storedUsd(total.costUsd);
     rows.set(model, {
       model, messages: row.messages + 1, requests: row.requests + reply.requests, input: row.input + total.input, output: row.output + total.output, reasoning: row.reasoning + total.reasoning,
-      cacheRead: row.cacheRead + total.cacheRead, cacheWrite: row.cacheWrite + total.cacheWrite, openCodeUsd: cost === null ? null : plus(row.openCodeUsd, parseUsd(cost)),
-      byPrice, prices: reply.prices, pricesFrom: reply.pricesFrom,
+      cacheRead: row.cacheRead + total.cacheRead, cacheWrite: row.cacheWrite + total.cacheWrite, openCodeUsd: cost === null ? row.openCodeUsd : plus(row.openCodeUsd, parseUsd(cost)),
+      byPrice, prices: reply.prices && Object.values(reply.prices).some(price => price !== null) ? reply.prices : row.prices,
+      pricesFrom: row.pricesFrom === 'artificial-analysis' ? row.pricesFrom : reply.pricesFrom ?? row.pricesFrom,
     });
   }
   return { since: usage.since ?? new Date(now).toISOString(), rows: [...rows.values()] };
@@ -193,8 +200,8 @@ async function storedUsage(store: Pick<RelayStore, 'get'>): Promise<Usage> {
 export function getUsage(store: Pick<RelayStore, 'get'>): Promise<Usage> {
   return serial(async () => { const usage = await storedUsage(store); return { ...usage, rows: usage.rows.sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0) }; });
 }
-/** Newest first, at most 20. */
-export function recentDecisions(store: Pick<RelayStore, 'get'>): Promise<Decision[]> { return serial(async () => (await stored(store)).reverse()); }
+/** Newest first, at most 20. Older records that still wait for their reply are kept for the totals and not shown. */
+export function recentDecisions(store: Pick<RelayStore, 'get'>): Promise<Decision[]> { return serial(async () => (await stored(store)).slice(-KEEP).reverse()); }
 
 // The switch: whether every message in one chat goes through Relay. One key per chat, so turning it on or off is one write and needs no queue.
 const switchKey = (sessionID: string) => `relay/on/${encodeURIComponent(sessionID)}`;
