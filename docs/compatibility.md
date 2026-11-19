@@ -1132,3 +1132,28 @@ The six exercises together. `npx tsx scripts/bench/report.ts --sides off,on-one,
 - On Ollama: the other four exercises (the cap), the "two for Execute" side, and Ollama's billing page.
 - More than one run of each exercise.
 - Claude: it needs an hour with no other Claude session of the owner's.
+
+## 2026-11-19 (evening) — Artificial Analysis's free list with the owner's test key, and Usage by model on OpenCode 2.3.2 (Windows 11)
+
+**Leave given.** The owner gave a test key for one check of Artificial Analysis's API ("here is test api created please verify can we get alll info i will dispose this key right away after testing"), and then asked whether the free plan gives the data Relay needs. It covers that check only. The key was sent only to artificialanalysis.ai, from one process, and written to no file. The owner said they would delete it after the test.
+
+**What the free list gave.** `GET /api/v2/language/models/free` returned four pages of 200, using 4 of the 100 requests a day (`X-AA-Tier: free`).
+
+- **Coverage:** 763 models. An intelligence index for 156, input and output prices for 475, a cache-read price for 364, and a cache-write price for 131.
+- **Efforts:** one entry for each effort, with the same prices. `claude-sonnet-5-5` is Max and `claude-sonnet-5-5-high` is High. The suffixes used are low, medium, high, xhigh, minimal, max and non-reasoning.
+- **Claude:** Sonnet 5.5, Haiku 5.5, Opus 5.5 and Fable 5.2, at every effort, have all four prices and an index. The prices are the same as Anthropic's list.
+- **Missing from the free plan:** prices for long chats, context windows and provider detail.
+- **A notice of 19 Nov:** the `performance` fields stop returning data on 10 Dec 2026, and `performance_v3` replaces them. Relay reads none of them.
+
+**Usage by model on a real host.** `npm run smoke:host:model` passed with the 2.3.2 CLI (isolated, mock models), before the fixes from the branch's review:
+
+- **The totals came per model and effort.** `smoke/model-big`: 4 messages and 5 requests. `smoke/model-chat`: 3 and 3, with no price. `smoke/model-cheap`: 1 and 1, at $0.01 in, $0.00005 out and $0.0015 from cache by price; its whole row was checked.
+- **OpenCode listed Relay with all three parts:** `features` was `server`, `tui` and `gui`.
+
+GitHub's checks run the same smoke on 2.3.0 on Linux, macOS and Windows after the push.
+
+**Not tested.**
+- Desktop's panel, and `/relay-stats` in the terminal app.
+- A real reply priced from Artificial Analysis: no key was saved in a running OpenCode.
+- Artificial Analysis's index in the model tables.
+- Whether OpenCode's `output` already includes reasoning tokens: Relay prices reasoning on top of output.
