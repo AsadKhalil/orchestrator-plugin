@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cheapestFirst, checksLine, contextLabel, decisionLine, indexLabel, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine } from '../src/relay-view.js';
+import { cheapestFirst, checksLine, contextLabel, decisionLine, indexLabel, modelRows, nextEffort, noDeciderNote, pickerModel, pillView, priceCell, priceLabel, privacyNote, recentLine, switchHint, tryLine, usageCells, usageText } from '../src/relay-view.js';
+import type { UsageRow } from '../src/relay-store.js';
 import { buildDecisionRequest, MAX_CHARS, MAX_FILE_NAMES } from '../src/decider.js';
 
 const chat = { kind: 'chat' as const, mode: 'execute' as const, model: 'p/exec#high' as string | null, confidence: 0.98 as number | null, fit: null as number | null, ms: 150, note: null as string | null };
@@ -158,4 +159,57 @@ test('the table can be ordered by the intelligence index, highest first, with mo
   const rows = modelRows([model('Low', 20.5), model('None', null), model('High', 61), model('Also', 20.5)], { query: '', provider: '', order: 'index' });
   assert.deepEqual(rows.map(row => row.name), ['High', 'Also', 'Low', 'None']);
   assert.deepEqual([indexLabel(54.5), indexLabel(61), indexLabel(33.44), indexLabel(null), indexLabel(undefined)], ['54.5', '61', '33.4', '—', '—']);
+});
+
+// ---- Usage by model: the panel's cells and the text /relay-stats shows ----
+const usageRow = (model: string, extra: Partial<UsageRow> = {}): UsageRow => ({
+  model, messages: 1, requests: 1, input: 100, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, openCodeUsd: '0',
+  byPrice: { input: null, output: null, cacheRead: null, cacheWrite: null }, prices: null, pricesFrom: null, ...extra,
+});
+const claude = usageRow('claude-agent/sonnet#low', {
+  requests: 3, input: 12_300, output: 8450, reasoning: 120, cacheRead: 1_204_000, cacheWrite: 31_000,
+  byPrice: { input: '0.0246', output: '0.0857', cacheRead: '0.1204', cacheWrite: '0.0775' },
+  prices: { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' }, pricesFrom: 'artificial-analysis',
+});
+const glm = usageRow('opencode-go/glm-5.3', {
+  messages: 2, requests: 6, input: 11_524, output: 30, cacheRead: 57_144, cacheWrite: 600,
+  byPrice: { input: '0.034572', output: '0.00045', cacheRead: '0.0171432', cacheWrite: '0.00225' },
+  prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' }, pricesFrom: 'opencode',
+});
+
+test('usage by model: each row as the panel shows it', () => {
+  assert.deepEqual(usageCells(claude), {
+    model: 'claude-agent/sonnet', effort: 'low', requests: '3', input: '12,300', output: '8,450', cacheRead: '1,204,000', cacheWrite: '31,000', cost: '$0.3082*',
+    byPrice: ['in 12,300 x $2 a million = $0.0246', 'out 8,450 + 120 reasoning x $10 a million = $0.0857', 'cache read 1,204,000 x $0.1 a million = $0.1204', 'cache write 31,000 x $2.5 a million = $0.0775'],
+  });
+  assert.deepEqual([usageCells(usageRow('local/llama')).effort, usageCells(usageRow('local/llama')).cost, usageCells(usageRow('local/llama')).byPrice], ['-', 'not listed', []]);
+  const partly = usageCells({ ...glm, byPrice: { ...glm.byPrice, cacheWrite: null }, prices: { ...glm.prices!, cacheWritePerMillion: null }, openCodeUsd: '0.06' });
+  assert.deepEqual([partly.cost, partly.byPrice.slice(3)], ['$0.0521652', ['cache write 600: no price listed', "OpenCode's own cost: $0.06"]]);
+});
+
+test('usage by model: the text /relay-stats shows, with the credit Artificial Analysis asks for', () => {
+  const text = usageText({ since: '2026-11-19T09:00:00.000Z', rows: [claude, usageRow('local/llama'), glm], credit: 'Prices and index: Artificial Analysis (artificialanalysis.ai)' });
+  assert.equal(text, [
+    'Relay: usage by model, since 2026-11-19 09:00 UTC',
+    '',
+    `model${' '.repeat(16)}effort  requests${' '.repeat(6)}in${' '.repeat(4)}out  cache read  cache write${' '.repeat(8)}cost`,
+    `claude-agent/sonnet  low${' '.repeat(12)}3  12,300  8,450${' '.repeat(3)}1,204,000${' '.repeat(7)}31,000${' '.repeat(4)}$0.3082*`,
+    `local/llama${' '.repeat(10)}-${' '.repeat(14)}1${' '.repeat(5)}100${' '.repeat(5)}10${' '.repeat(11)}0${' '.repeat(12)}0  not listed`,
+    `opencode-go/glm-5.3  -${' '.repeat(14)}6  11,524${' '.repeat(5)}30${' '.repeat(6)}57,144${' '.repeat(10)}600  $0.0544152`,
+    '',
+    'claude-agent/sonnet#low, cost by price:',
+    '  in 12,300 x $2 a million = $0.0246',
+    '  out 8,450 + 120 reasoning x $10 a million = $0.0857',
+    '  cache read 1,204,000 x $0.1 a million = $0.1204',
+    '  cache write 31,000 x $2.5 a million = $0.0775',
+    'opencode-go/glm-5.3, cost by price:',
+    '  in 11,524 x $3 a million = $0.034572',
+    '  out 30 x $15 a million = $0.00045',
+    '  cache read 57,144 x $0.3 a million = $0.0171432',
+    '  cache write 600 x $3.75 a million = $0.00225',
+    '',
+    '* at Artificial Analysis prices',
+    'Prices and index: Artificial Analysis (artificialanalysis.ai)',
+  ].join('\n'));
+  assert.equal(usageText({ since: null, rows: [], credit: null }), 'No reply counted yet. Relay counts every message it places: /relay, or any message in a chat with Relay on.');
 });

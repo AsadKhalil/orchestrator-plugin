@@ -1,8 +1,8 @@
 import type { ModelCostView } from './inventory.js';
-import type { Decision, Prices, Reply } from './relay-store.js';
+import type { Decision, Prices, Reply, UsageRow } from './relay-store.js';
 import { modeLabel } from './router.js';
 import { MAX_CHARS, MAX_FILE_NAMES } from './decider.js';
-import { parseUsd } from './costs.js';
+import { formatUsd, parseUsd } from './costs.js';
 import type { ModelChoice } from './settings.js';
 
 // What the Modes tab says in words. Pure, so it runs under node:test; the panel bundles it, so nothing here may import from `node:`.
@@ -97,6 +97,38 @@ const took = (reply: Reply | null | undefined) => {
 };
 /** One row of Recent choices. The time is left out: the panel shows it in the viewer's own clock. */
 export const recentLine = (decision: Shown & Pick<Decision, 'kind'> & { reply?: Reply | null }) => `${noted(`${decision.kind === 'helper' ? 'Helper' : 'Chat'}: ${outcome(decision)}`, decision.note)}${took(decision.reply)}`;
+
+const kinds = [['input', 'in', 'inputPerMillion'], ['output', 'out', 'outputPerMillion'], ['cacheRead', 'cache read', 'cacheReadPerMillion'], ['cacheWrite', 'cache write', 'cacheWritePerMillion']] as const;
+/**
+ * One row of Usage by model: the model and its effort, the counts, the cost by price (marked * when Artificial Analysis gave the prices), and
+ * how each kind of token was priced. Output is priced with its reasoning. OpenCode's own cost is added when it is more than $0.
+ */
+export function usageCells(row: UsageRow) {
+  const hash = row.model.lastIndexOf('#'), costs = kinds.flatMap(([kind]) => { const usd = row.byPrice[kind]; return usd === null ? [] : [parseUsd(usd)]; });
+  const byPrice = !costs.length ? [] : kinds.flatMap(([kind, label, price]) => {
+    const tokens = kind === 'output' ? `${amount(row.output)}${row.reasoning > 0 ? ` + ${amount(row.reasoning)} reasoning` : ''}` : amount(row[kind]);
+    const usd = row.byPrice[kind], per = row.prices?.[price] ?? null;
+    if (usd !== null && per !== null) return [`${label} ${tokens} x $${per} a million = $${usd}`];
+    return row[kind] > 0 || (kind === 'output' && row.reasoning > 0) ? [`${label} ${tokens}: no price listed`] : [];
+  });
+  return {
+    model: hash < 0 ? row.model : row.model.slice(0, hash), effort: hash < 0 ? '-' : row.model.slice(hash + 1), requests: amount(row.requests), input: amount(row.input), output: amount(row.output),
+    cacheRead: amount(row.cacheRead), cacheWrite: amount(row.cacheWrite), cost: costs.length ? `$${formatUsd(costs.reduce((sum, usd) => sum + usd, 0n))}${row.pricesFrom === 'artificial-analysis' ? '*' : ''}` : 'not listed',
+    byPrice: [...byPrice, ...(row.openCodeUsd !== null && row.openCodeUsd !== '0' ? [`OpenCode's own cost: $${row.openCodeUsd}`] : [])],
+  };
+}
+/** What `/relay-stats` shows: a table of every model and effort, how each one's cost was worked out, and the credit Artificial Analysis asks for. */
+export function usageText(view: { since: string | null; rows: readonly UsageRow[]; credit: string | null }): string {
+  if (!view.rows.length) return 'No reply counted yet. Relay counts every message it places: /relay, or any message in a chat with Relay on.';
+  const cells = view.rows.map(usageCells);
+  const table = [['model', 'effort', 'requests', 'in', 'out', 'cache read', 'cache write', 'cost'], ...cells.map(cell => [cell.model, cell.effort, cell.requests, cell.input, cell.output, cell.cacheRead, cell.cacheWrite, cell.cost])];
+  const widths = table[0].map((_, column) => Math.max(...table.map(line => line[column].length)));
+  const lines = table.map(line => line.map((cell, column) => column < 2 ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join('  ').trimEnd());
+  const blocks = view.rows.flatMap((row, at) => cells[at].byPrice.length ? [`${row.model}, cost by price:`, ...cells[at].byPrice.map(line => `  ${line}`)] : []);
+  const footer = [...(view.rows.some(row => row.pricesFrom === 'artificial-analysis') ? ['* at Artificial Analysis prices'] : []), ...(view.credit ? [view.credit] : [])];
+  const since = view.since ? `, since ${view.since.slice(0, 10)} ${view.since.slice(11, 16)} UTC` : '';
+  return [`Relay: usage by model${since}`, '', ...lines, ...(blocks.length ? ['', ...blocks] : []), ...(footer.length ? ['', ...footer] : [])].join('\n');
+}
 
 /** What the test box shows for one try: what Relay would do with the sample message. */
 export function tryLine(result: Shown & Pick<Decision, 'costUsd'>): string {
