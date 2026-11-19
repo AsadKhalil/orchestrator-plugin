@@ -5,6 +5,7 @@ import { relayCommand, fileSize, type RelayDeps } from './relay-command.js';
 import { reviewHelperHook } from './review-helper.js';
 import { relayAutoHook, relayReplyHook } from './relay-auto.js';
 import { decide } from './decider.js';
+import { storedAaModels } from './artificial-analysis.js';
 import type { RelayStore } from './relay-store.js';
 
 export async function createRuntime(context: Plugin.Context) {
@@ -30,7 +31,7 @@ export async function createRuntime(context: Plugin.Context) {
     const auto = await context.session.hook('prompt', relayAutoHook(relayDeps));
     disposers.push(() => auto.dispose());
     // When a chat has finished its work, what the reply to a placed message took is read from the chat and kept with its record. No model is asked.
-    const replies = await context.session.hook('experimental.idle', relayReplyHook(relayDeps));
+    const replies = await context.session.hook('experimental.idle', relayReplyHook({ ...relayDeps, borrowedPrices: () => storedAaModels(context.storage) }));
     disposers.push(() => replies.dispose());
     const rpc = await registerRpc(context);
     disposers.push(() => rpc.dispose());

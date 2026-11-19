@@ -1,6 +1,7 @@
 import type { PromptInput } from '@opencode/schema/prompt-input';
 import type { Session } from '@opencode/schema/session';
 import { within } from './decider.js';
+import type { AaModel } from './artificial-analysis.js';
 import { replyOf } from './chat-facts.js';
 import { placeMessage, recordPlaced, timingOf, uploadsOf, type RelayDeps } from './relay-command.js';
 import { chatSwitch, saveReplies, waitingReplies } from './relay-store.js';
@@ -37,20 +38,24 @@ export function relayAutoHook(deps: RelayDeps) {
 /**
  * What a reply took. When a chat has finished its work, the host runs this just before the chat goes idle. For each record of that chat
  * that still waits, the reply is read from the chat's own messages and kept with the record, with the prices the model list gives for the
- * model that answered. No model is asked. It never throws, and it holds the chat for one second at most; a chat with no waiting record costs
- * one read of storage.
+ * model that answered, or else Artificial Analysis's from the copy kept in storage (`borrowedPrices`; never a request). No model is asked.
+ * It never throws, and it holds the chat for one second at most; a chat with no waiting record costs one read of storage.
  */
-export function relayReplyHook(deps: Pick<RelayDeps, 'session' | 'store' | 'readMs' | 'chatModels'>) {
+export function relayReplyHook(deps: Pick<RelayDeps, 'session' | 'store' | 'readMs' | 'chatModels'> & { borrowedPrices?: () => Promise<AaModel[]> }) {
   const limitMs = Math.min(timingOf(deps).readMs, 1000);
+  /** A list that fails, or takes more than half the time, is no list; the reply is kept all the same. */
+  const spare = async <T>(read: (() => Promise<T[]>) | undefined): Promise<T[] | null> => {
+    if (!read) return null;
+    const value = await within(read, limitMs / 2).catch(() => null);
+    return Array.isArray(value) ? value : null;
+  };
   return async (event: { readonly sessionID: string }): Promise<void> => {
     try {
       await within(async () => {
         const waiting = await waitingReplies(deps.store, event.sessionID);
         if (!waiting.length) return;
-        // A model list that fails, or takes more than half the time, leaves the prices unknown; the reply is kept all the same.
-        const [messages, models] = await Promise.all([deps.session.context({ sessionID: event.sessionID as Session.ID }), within(deps.chatModels, limitMs / 2).catch(() => null)]);
-        const listed = Array.isArray(models) ? models : null;
-        const replies = new Map(waiting.flatMap(messageID => { const reply = replyOf(messages, messageID, listed); return reply ? [[messageID, reply] as const] : []; }));
+        const [messages, listed, borrowed] = await Promise.all([deps.session.context({ sessionID: event.sessionID as Session.ID }), spare(deps.chatModels), spare(deps.borrowedPrices)]);
+        const replies = new Map(waiting.flatMap(messageID => { const reply = replyOf(messages, messageID, listed, borrowed); return reply ? [[messageID, reply] as const] : []; }));
         if (replies.size) await saveReplies(deps.store, event.sessionID, replies);
       }, limitMs);
     } catch { /* the record is for the panel; the chat goes idle whatever happens here */ }

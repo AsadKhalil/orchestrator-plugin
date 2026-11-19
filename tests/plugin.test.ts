@@ -44,7 +44,7 @@ test('when the panel calls cannot be registered, start-up fails and leaves no co
 });
 
 test('the idle hook as registered reads what the reply took from the chat and keeps it with the record', async () => {
-  const messages = [{ id: 'm2', type: 'user', time: { created: 1000 } }, { id: 'a1', type: 'assistant', time: { created: 1020, firstToken: 1500, completed: 2000 }, model: { providerID: 'p', id: 'm' }, tokens: { input: 900, output: 20, reasoning: 0, cache: { read: 100, write: 50 } }, cost: 0.003 }];
+  const messages: Record<string, unknown>[] = [{ id: 'm2', type: 'user', time: { created: 1000 } }, { id: 'a1', type: 'assistant', time: { created: 1020, firstToken: 1500, completed: 2000 }, model: { providerID: 'p', id: 'm' }, tokens: { input: 900, output: 20, reasoning: 0, cache: { read: 100, write: 50 } }, cost: 0.003 }];
   const records = new Map<string, unknown>([['relay/settings', { revision: 1, modes: { plan: [], execute: [], review: [{ providerID: 'p', id: 'm', variant: null, useFor: '' }] }, decider: { providerID: 'd', id: 'judge', variant: null } }], ['relay/on/ses-b', true]]), host = commandHost(records, { messages });
   await plugin.setup(host.ctx as never);
   await host.sessionHooks.find(hook => hook.name === 'prompt')!.handler({ sessionID: 'ses-b', messageID: 'm2', delivery: 'steer', prompt: { text: 'Check the diff for mistakes.' } });
@@ -53,6 +53,15 @@ test('the idle hook as registered reads what the reply took from the chat and ke
   const total = { input: 900, output: 20, reasoning: 0, cacheRead: 100, cacheWrite: 50, costUsd: '0.003' }, prices = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null };
   assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.messageID, item.reply]), [['m2', { requests: 1, fresh: 950, cached: 100, costUsd: '0.003', seconds: 0.5, model: 'p/m', total, prices, pricesFrom: null }]], "with the prices the host's model list gives, none here");
   assert.equal(host.asked.length, 1, 'the one decider request; reading the reply asks no model');
+  // With Artificial Analysis's list stored (fetched for the panel with the owner's key), a model OpenCode lists no price for is priced from it.
+  const api = { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' };
+  records.set('relay/aa-models', { fetchedAt: '2026-11-19T00:00:00.000Z', models: [{ slug: 'm', name: 'M', creator: 'P', released: null, index: 30, prices: api }] });
+  await host.sessionHooks.find(hook => hook.name === 'prompt')!.handler({ sessionID: 'ses-b', messageID: 'm3', delivery: 'steer', prompt: { text: 'Check it again.' } });
+  await new Promise(done => setTimeout(done, 20));
+  messages.push({ id: 'm3', type: 'user', time: { created: 3000 } }, { ...messages[1], id: 'a2', time: { created: 3020, firstToken: 3500, completed: 4000 } });
+  await host.sessionHooks.find(hook => hook.name === 'experimental.idle')!.handler({ sessionID: 'ses-b', background: [] });
+  const second = (records.get('relay/decisions') as any[]).find(item => item.messageID === 'm3');
+  assert.deepEqual([second.reply.prices, second.reply.pricesFrom], [api, 'artificial-analysis']);
 });
 
 test('the switch hook as registered places a message in a chat whose switch is on, and leaves other chats alone', async () => {

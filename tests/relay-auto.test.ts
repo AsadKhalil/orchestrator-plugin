@@ -157,6 +157,19 @@ test('a model list that fails or is slow leaves the prices unknown, and the repl
   }
 });
 
+test("the idle hook prices a reply from Artificial Analysis's stored list when OpenCode lists no price, and keeps the reply when that list fails", async () => {
+  const api = { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' }, unlisted = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null };
+  const lent = [{ slug: 'exec', name: 'Exec', creator: 'P', released: null, index: 40, prices: api }];
+  const cases = [['a stored list', async () => lent, api, 'artificial-analysis'], ['a list that cannot be read', async () => { throw new Error('no store'); }, unlisted, null]] as const;
+  for (const [label, borrowedPrices, prices, pricesFrom] of cases) {
+    const f = turnOn(fakeRelay({ messages: replied(1000) }));
+    await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);
+    await relayReplyHook({ ...f.deps, borrowedPrices })({ sessionID: 'ses-1' });
+    const reply = (await last(f)).reply;
+    assert.deepEqual([reply?.prices, reply?.pricesFrom, reply?.requests], [prices, pricesFrom, 2], label);
+  }
+});
+
 test('the idle hook never throws and never holds a chat for long', async () => {
   for (const [label, options] of [['the chat cannot be read', { fail: { context: new Error('no such chat') } }], ['the chat never answers', { messages: 'never' }], ['the record cannot be saved', { messages: replied(1000) }]] as const) {
     const f = turnOn(fakeRelay({ ...options, readMs: 60 }));

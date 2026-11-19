@@ -1,3 +1,4 @@
+import { aaFor, type AaModel } from './artificial-analysis.js';
 import { formatUsd, parseUsd, pricesAt, usdString } from './costs.js';
 import type { ListedModel } from './inventory.js';
 import { hostVariant, modelName, type Prices, type Reply } from './relay-store.js';
@@ -21,9 +22,10 @@ const counts = (message: Message) => message.type === 'assistant' && message.tok
 
 /**
  * What the reply to one message took, or null while it cannot be read: no such message, no answer to it yet, or an answer with no counts.
- * `models` gives the prices of the model that answered; without it, or without that model in it, the prices are unknown.
+ * `models` gives the prices of the model that answered. When it lists no price for that model, Artificial Analysis's `borrowed` list does,
+ * if it has the model; otherwise the prices are unknown.
  */
-export function replyOf(messages: unknown, messageID: string, models: readonly Pick<ListedModel, 'providerID' | 'id' | 'cost'>[] | null = null): Reply | null {
+export function replyOf(messages: unknown, messageID: string, models: readonly (Pick<ListedModel, 'providerID' | 'id' | 'cost'> & { name?: string })[] | null = null, borrowed: readonly AaModel[] | null = null): Reply | null {
   const all = list(messages), at = all.findIndex(message => message.type === 'user' && message.id === messageID);
   if (at < 0) return null;
   const rest = all.slice(at + 1), next = rest.findIndex(message => message.type === 'user');
@@ -36,15 +38,17 @@ export function replyOf(messages: unknown, messageID: string, models: readonly P
   const add = (pick: (tokens: NonNullable<Message['tokens']>) => unknown) => answers.reduce((sum, answer) => sum + (answer.tokens ? count(pick(answer.tokens)) : 0), 0);
   const costs = answers.map(answer => usdString(answer.cost));
   // shortcut: the prices for the size of the first request. Later requests of a long reply can cross a price step; the host's own cost below counts each request at its own step.
-  const prices = listed ? pricesAt(listed.cost, read.fresh + read.cached) : null;
+  const prices = listed ? pricesAt(listed.cost, read.fresh + read.cached) : null, own = prices && listedPrice(prices) ? prices : null;
+  const effort = hostVariant(typeof variant === 'string' ? variant : undefined);
+  const lent = !own && named && borrowed ? aaFor({ providerID, id, name: listed?.name ?? id, variant: effort }, borrowed)?.prices ?? null : null;
   return {
     requests: answers.length, fresh: read.fresh, cached: read.cached, costUsd: usdString(first.cost), seconds: typeof asked === 'number' && typeof word === 'number' && word >= asked ? Math.round((word - asked) / 100) / 10 : null,
-    model: named ? modelName({ providerID, id, variant: hostVariant(typeof variant === 'string' ? variant : undefined) }) : null,
+    model: named ? modelName({ providerID, id, variant: effort }) : null,
     total: {
       input: add(tokens => tokens.input), output: add(tokens => tokens.output), reasoning: add(tokens => tokens.reasoning), cacheRead: add(tokens => tokens.cache?.read), cacheWrite: add(tokens => tokens.cache?.write),
       costUsd: costs.every((cost): cost is string => cost !== null) ? formatUsd(costs.reduce((sum, cost) => sum + parseUsd(cost), 0n)) : null,
     },
-    prices, pricesFrom: prices && listedPrice(prices) ? 'opencode' : null,
+    prices: own ?? lent ?? prices, pricesFrom: own ? 'opencode' : lent ? 'artificial-analysis' : null,
   };
 }
 /** Whether OpenCode lists a price: $0 for both input and output can mean "not listed". */
