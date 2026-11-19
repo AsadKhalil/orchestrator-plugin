@@ -97,7 +97,7 @@ test('/relay as registered sends the message once, marked as placed, and records
 
 test('the plugin id, the RPC id and the package name are one name: relay-opencode', async () => {
   // OpenCode keeps each plugin's saved settings under its id, so a new name loses everyone's settings (the rename from feature-pilot did, 17 Nov 2026).
-  const { RelayRpc } = await import('../src/contract.js');
+  const { RelayRpc } = await import('../src/contract.js'), { default: tui } = await import('../src/tui.js');
   const { name } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { name: string };
-  assert.deepEqual([plugin.id, RelayRpc.id, name], ['relay-opencode', 'relay-opencode', 'relay-opencode']);
+  assert.deepEqual([plugin.id, RelayRpc.id, tui.id, name], ['relay-opencode', 'relay-opencode', 'relay-opencode', 'relay-opencode'], 'the terminal part too');
 });

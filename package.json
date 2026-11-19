@@ -39,7 +39,8 @@
   },
   "exports": {
     ".": "./dist/index.js",
-    "./gui-experimental": "./dist/gui-experimental.cjs"
+    "./gui-experimental": "./dist/gui-experimental.cjs",
+    "./tui": "./dist/tui.js"
   },
   "files": [
     "dist"

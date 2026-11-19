@@ -14,7 +14,7 @@ const forbidden = [
   [/benchmark.*.(json|csv|tsv|ndjson|jsonl|parquet|xlsx|ya?ml)$/i, 'possible benchmark data dump'],
 ];
 for (const p of paths) for (const [re, why] of forbidden) if (re.test(p)) problems.push(`${p}: ${why}`);
-for (const required of ['dist/index.js', 'dist/gui-experimental.cjs']) if (!paths.includes(required)) problems.push(`${required}: missing (run npm run build first)`);
+for (const required of ['dist/index.js', 'dist/gui-experimental.cjs', 'dist/tui.js']) if (!paths.includes(required)) problems.push(`${required}: missing (run npm run build first)`);
 
 // Obvious secret shapes only; this is a tripwire, not a scanner.
 const secrets = [
