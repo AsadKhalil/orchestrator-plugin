@@ -1069,3 +1069,66 @@ The owner lifted the rule against testing in their profile for this test: "you c
 - More than one run of each exercise, so with four exercises only large differences mean anything.
 - Chats longer than four messages, helpers, other Go models, and Go's console checked against the computed numbers.
 - The Claude and Ollama parts of the design.
+
+## 2026-11-19 (afternoon) — The proof test on Ollama Cloud in real dollars, and Go's last two exercises (Windows 11; Desktop's service 2.3.2; the owner's Relay copy, 0.1.0 built from `01b59fb`)
+
+The owner, after the morning's results: "yes plan that and do more testing on opencode again i hava ollama , claude agent and open go you can use any models from these providers". They asked for two runs: Ollama in real dollars, capped at $2, and the last two exercises on Go. The runner is `scripts/bench/run.ts` as of `5eb479d`, in the same test folder and under the same rules as the morning. Only the Off, "one model a mode" and Cheap sides ran: until the decider fix (`docs/superpowers/plans/2026-11-19-relay-decider-last-reply.md`), "two for Execute" is a second Relay off.
+
+**Ollama Cloud, in real dollars.**
+- **Models:** strong `ollama-cloud/glm-5.3` ($1.40 in, $4.40 out, $0.26 read from cache per million tokens); cheap `ollama-cloud/glm-5.3-flash` ($0.15, $0.50, $0.03); decider `opencode/jev-1.13-free`.
+- **Why these:** a big model and a small one of one family. The price gap (about nine times) is smaller than the Go pair's.
+
+| | Off | On, one model a mode | Cheap only |
+|---|---:|---:|---:|
+| Tasks passed | 2 of 2 | 2 of 2 | 2 of 2 |
+| Cost at list price | $0.8087 | $0.4674 | $0.0656 |
+| Saved, against Off | - | 42.2% | 91.9% |
+
+- **These are real dollars.** OpenCode recorded $1.341622 for the six chats, and the list-price arithmetic gives $1.34162389. Ollama's own billing page was not checked.
+- **The decider placed every message as intended.**
+  - Each plan and review went to GLM-5.3 on `plan`, with confidence 1.
+  - Each "Implement it." and "Fix what the review found." went to Flash on `build`, with confidence 0.96 to 0.98.
+- **Only two exercises fit the cap.** GLM-5.3's Off chats cost $0.33 and $0.48, more than estimated from the Go run's tokens. After `variable-length-quantity`, $1.34 was spent, and the next exercise would have passed $2.
+- **How the run stopped.** The runner then checked the cap before each chat. So it would have started `wordy`'s Off chat (about $0.40) and stopped before `wordy`'s other sides, and nothing could have been compared with that chat.
+  - To avoid paying for it, I held a locked file in the test folder while that exercise's last chat ran.
+  - The runner's next folder reset failed. It put Relay's settings back (checked) and exited before any further chat started.
+  - The runner now checks the limit before each task, counting the task's sides together.
+
+**Go: the last two exercises.**
+Same models, decider and settings as the morning.
+- **The first attempt stopped after one chat.** One Kimi request lost its connection (ECONNRESET). OpenCode retried and the reply went on, but the runner stopped at any failed request.
+  - The runner now stops only when a reply ends in a failure.
+  - That chat (2.6% of a 5-hour window) is left out.
+- **The second attempt:**
+  - `variable-length-quantity`: Off passed ($0.1841), "one model a mode" passed ($0.3811), Cheap passed ($0.0091).
+  - `forth`: Off failed ($0.3758), "one model a mode" passed ($0.2100), Cheap failed ($0.0139).
+- **On `variable-length-quantity`, Relay cost twice as much as Off.**
+  - Flash's build turn ran long: 10 requests and 37,522 output and reasoning tokens.
+  - Kimi then read the whole chat again for the review: 40,435 tokens new in its first request. The review alone cost $0.2683, more than Off's whole chat.
+  - This is the cost the 17 Nov research warns of: a switch makes the next model read the chat again, at its own price.
+
+The six exercises together. `npx tsx scripts/bench/report.ts --sides off,on-one,cheap` prints this from the morning's files and this run's:
+
+| | Off | On, one model a mode | Cheap only |
+|---|---:|---:|---:|
+| Tasks passed | 4 of 6 | 6 of 6 | 3 of 6 |
+| Cost at list price | $1.6718 | $1.1738 | $0.0994 |
+| 5-hour limit used (estimated) | 55.7% | 35.9% | 0.8% |
+| Weekly limit used (estimated) | 22.3% | 14.4% | 0.3% |
+| Saved, against Off | - | 29.8% | 94.1% (passed fewer) |
+
+- **Relay with one model a mode** passed all six. It cost 29.8% less than Relay off and used about a third less of the estimated limits. On the morning's four exercises the saving was 47.6%; one exercise in six cost more with Relay.
+- **The others:** Relay off failed `wordy` and `forth`. Flash alone failed three.
+- **The test's own use of the owner's Go plan today:** about 26.5% of the month, by the same arithmetic. That is 132% of one 5-hour window, spread over two windows, and 52.9% of the weekly limit.
+
+**OpenCode's service stopped answering, twice.**
+- When: 15:12 and 20:16 UTC.
+- Each time, a Relay RPC call (`listModels`, from the runner's check and from a model listing) went to the test folder after the service had evicted it (about an hour without use).
+- The call booted the folder and got 400, "RPC is unavailable: relay-opencode", because the folder's plugins had not loaded yet. The plugins then loaded, Relay's last, and the service wrote nothing more. Desktop replaced it after about 1 and 8 minutes.
+- The same folder booted without trouble when the owner opened it in the morning, and when Desktop booted it at 20:25.
+- The cause is not known. `AGENTS.md` now counts an evicted folder as one the service has not loaded.
+
+**Not tested.**
+- On Ollama: the other four exercises (the cap), the "two for Execute" side, and Ollama's billing page.
+- More than one run of each exercise.
+- Claude: it needs an hour with no other Claude session of the owner's.
