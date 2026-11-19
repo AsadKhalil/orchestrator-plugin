@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerRpc, RelayRpc } from '../src/rpc.js';
 import { recordDecision, saveReplies } from '../src/relay-store.js';
+import { AA_CREDIT, AA_LIST_URL, AA_SOURCE } from '../src/artificial-analysis.js';
 
 /** What the real host does with a handler: it supplies the typed-error factory, and the client sees a returned error as a rejected call (a thrown one only as "RPC call failed"). */
 class HostError extends Error { constructor(readonly type: string, message: string, readonly data: unknown) { super(message); } }
@@ -62,10 +63,10 @@ const relayHigh = { providerID: 'p', id: 'm', variant: 'high' }, relayDeep = { p
 const noModes = { plan: [], execute: [], review: [] };
 const picked = (name: string, value: unknown, confidence: number) => ({ type: 'choice', name, choice: value, probabilities: [], confidence });
 /** Two project folders on one host: plugin storage is shared, the chat models are p/m (effort high) and p/deep, and the only decision model is d/judge. */
-function relayHost() {
+function relayHost(fetcher: typeof fetch = (async () => { throw new Error('no network in tests'); }) as typeof fetch) {
   const data = new Map<string, unknown>(), requests: any[] = []; let lists = 0;
   let reply: unknown = { answers: [picked('mode', 'review', 0.97)], cost: 0 };
-  const storage = { async get(key: string) { return structuredClone(data.get(key)); }, async set(key: string, value: unknown) { data.set(key, structuredClone(value)); } };
+  const storage = { async get(key: string) { return structuredClone(data.get(key)); }, async set(key: string, value: unknown) { data.set(key, structuredClone(value)); }, async remove(key: string) { data.delete(key); } };
   const listed = (providerID: string, id: string, variants: string[] = []) => ({ providerID, id, name: id, enabled: true, status: 'active', variants: variants.map(variant => ({ id: variant })), capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 1000, output: 10 }, cost: [{ input: 0.24, output: 0, cache: { read: 0, write: 0 } }], headers: { authorization: 'secret' } });
   const connect = async (directory: string) => {
     let handlers: any;
@@ -74,7 +75,7 @@ function relayHost() {
       model: { async list(input: { types?: string[] }) { lists++; return { data: input.types?.includes('decision') ? [listed('d', 'judge')] : [listed('p', 'm', ['high']), listed('p', 'deep')] }; } },
       experimental: { generate: { async decisions(request: unknown) { requests.push(request); return reply; } } },
       rpc: { async register(_d: unknown, h: unknown) { handlers = asClient(h); return { async dispose() {} }; } },
-    } as never);
+    } as never, { fetcher });
     return handlers;
   };
   return { storage, requests, connect, answer(next: unknown) { reply = next; }, lists: () => lists };
@@ -193,4 +194,56 @@ test('the index comes from one public list fetched at most once a day, and an ol
   const none = await handlers.listIntelligence({});
   assert.deepEqual([none.scores, none.fetchedAt, none.note], [[], null, 'could not load the index: OpenRouter answered 503']);
   assert.deepEqual(fits(RelayRpc.methods.listIntelligence.output, none), []);
+});
+
+// ---- Usage by model, and the Artificial Analysis key ----
+const KEY = 'aa_test_key_0123456789';
+const aaPage = (models: { slug: string; name: string; creator: string; index: number }[]) => ({ tier: 'free', pagination: { page: 1, page_size: 200, total_pages: 1, has_more: false }, data: models.map(model => ({
+  slug: model.slug, name: model.name, release_date: '2026-09-28', model_creator: { name: model.creator }, evaluations: { artificial_analysis_intelligence_index: model.index },
+  pricing: { price_1m_input_tokens: 2, price_1m_output_tokens: 10, price_1m_cache_hit_tokens: 0.1, price_1m_cache_write_tokens: 2.5 },
+})) });
+
+test('usage by model and the price key fit what they declare, and no call returns the key', async () => {
+  const asked: { url: string; key: string | null }[] = [];
+  const fetcher = (async (url: string, init?: RequestInit) => { asked.push({ url, key: new Headers(init?.headers).get('x-api-key') }); return new Response(JSON.stringify(aaPage([{ slug: 'm', name: 'M', creator: 'P', index: 40 }]))); }) as unknown as typeof fetch;
+  const host = relayHost(fetcher), one = await host.connect('/one');
+  const took = { requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/m#high', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' }, prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' }, pricesFrom: 'opencode' as const };
+  await recordDecision(host.storage, { at: '2026-11-19T00:00:00.000Z', sessionID: 'ses-1', kind: 'chat', mode: 'execute', confidence: 0.9, fit: 0.8, model: 'p/m#high', ms: 150, costUsd: '0', note: null, messageID: 'msg-1' });
+  await saveReplies(host.storage, 'ses-1', new Map([['msg-1', took]]));
+  const usage = await one.getRelayUsage({});
+  assert.deepEqual([usage.directory, usage.rows.map((row: { model: string; requests: number }) => [row.model, row.requests]), usage.credit], ['/one', [['p/m#high', 3]], null]);
+  assert.deepEqual([fits(RelayRpc.methods.getRelayUsage.output, usage), fits(RelayRpc.methods.setPriceKey.input, { key: KEY }), fits(RelayRpc.methods.setPriceKey.input, { key: null })], [[], [], []]);
+  const saved = await one.setPriceKey({ key: KEY });
+  assert.deepEqual([saved, asked], [{ saved: true, note: null }, [{ url: `${AA_LIST_URL}?page=1`, key: KEY }]], 'the list is loaded once with the new key, from Artificial Analysis only');
+  const relay = await one.getRelay({}), again = await one.getRelayUsage({});
+  assert.deepEqual([relay.priceKey, again.credit, fits(RelayRpc.methods.getRelay.output, relay), fits(RelayRpc.methods.setPriceKey.output, saved)], [true, AA_CREDIT, [], []]);
+  for (const output of [relay, again, saved, await one.getRelayDecisions({}), await one.getRelayChat({ sessionID: 'ses-1' }), await one.listIntelligence({})]) assert.equal(JSON.stringify(output).includes(KEY), false);
+  await assert.rejects(one.setPriceKey({ key: 'has a space' }), { type: 'rejected', message: /does not look like/ });
+  assert.deepEqual(await one.setPriceKey({ key: null }), { saved: false, note: null });
+  assert.equal((await one.getRelay({})).priceKey, false);
+});
+
+test("with a saved key the index is Artificial Analysis's; when it refuses the key, OpenRouter's with a note, and the key never goes to OpenRouter", async () => {
+  const records = new Map<string, unknown>([['relay/aa-key', KEY]]), headers: { url: string; key: string | null }[] = [];
+  const model = (providerID: string, id: string, name: string) => ({ providerID, id, name, enabled: true, status: 'active', variants: [], capabilities: { input: ['text'], output: ['text'], tools: true }, limit: { context: 100, output: 10 } });
+  let aaStatus = 200, handlers: any;
+  const fetcher = (async (url: string, init?: RequestInit) => {
+    headers.push({ url, key: new Headers(init?.headers).get('x-api-key') });
+    if (url.startsWith(AA_LIST_URL)) return new Response(JSON.stringify(aaPage([{ slug: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (Max)', creator: 'Anthropic', index: 50 }, { slug: 'glm-5-3', name: 'GLM-5.3', creator: 'Z AI', index: 30 }])), { status: aaStatus });
+    return new Response(JSON.stringify({ data: [{ id: 'z-ai/glm-5.3', benchmarks: { artificial_analysis: { intelligence_index: 61 } } }] }));
+  }) as unknown as typeof fetch;
+  await registerRpc({
+    location: { directory: '/repo' },
+    storage: { async get(key: string) { return structuredClone(records.get(key)); }, async set(key: string, value: unknown) { records.set(key, structuredClone(value)); }, async remove(key: string) { records.delete(key); } },
+    model: { async list(input: { types?: string[] }) { return { data: input.types?.[0] === 'decision' ? [] : [model('claude-agent', 'sonnet', 'Sonnet'), model('ollama-cloud', 'glm-5.3', 'GLM-5.3'), model('local', 'llama', 'Llama Local')] }; } },
+    rpc: { async register(_definition: unknown, h: unknown) { handlers = asClient(h); return { async dispose() {} }; } },
+  } as never, { fetcher, now: () => Date.parse('2026-11-19T08:00:00Z') });
+  const fromAa = await handlers.listIntelligence({});
+  assert.deepEqual([fromAa.source, fromAa.note, fromAa.scores], [AA_SOURCE, null, [{ providerID: 'claude-agent', id: 'sonnet', index: 50, matched: 'claude-sonnet-5-5' }, { providerID: 'ollama-cloud', id: 'glm-5.3', index: 30, matched: 'glm-5-3' }]]);
+  assert.deepEqual(fits(RelayRpc.methods.listIntelligence.output, fromAa), []);
+  records.delete('relay/aa-models'); aaStatus = 401;
+  const fallback = await handlers.listIntelligence({});
+  assert.deepEqual([fallback.source.includes('OpenRouter'), fallback.note, fallback.scores.map((score: { id: string; index: number }) => [score.id, score.index])], [true, 'could not load the list from Artificial Analysis: the key was refused', [['glm-5.3', 61]]]);
+  assert.deepEqual(headers.filter(asked => !asked.url.startsWith(AA_LIST_URL)).map(asked => asked.key), [null], 'OpenRouter is asked without the key');
+  assert.equal(headers.filter(asked => asked.url.startsWith(AA_LIST_URL)).every(asked => asked.key === KEY), true);
 });

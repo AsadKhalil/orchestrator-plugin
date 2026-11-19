@@ -2,10 +2,11 @@ import { RelayRpc } from './contract.js';
 export { RelayRpc } from './contract.js';
 import type { Plugin } from '@opencode/plugin';
 import { listProjectModels } from './inventory.js';
-import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, chatSwitch, setChatSwitch, type RelaySettings, type RelayStore } from './relay-store.js';
+import { getRelaySettings, saveRelaySettings, recentDecisions, modelName, chatSwitch, setChatSwitch, getUsage, type RelaySettings, type RelayStore } from './relay-store.js';
 import { checksStatus, describeError, linesFor, route } from './router.js';
 import { decide } from './decider.js';
 import { INDEX_SOURCE, indexFor, loadIndexTable } from './intelligence.js';
+import { AA_CREDIT, AA_SOURCE, aaFor, getPriceKey, loadAaModels, setPriceKey } from './artificial-analysis.js';
 
 const chatID = (input: unknown) => { const id = (input as { sessionID: string }).sessionID.trim(); if (!id) throw new Error('Name the chat'); return id; };
 
@@ -15,18 +16,35 @@ export function registerRpc(context: Pick<Plugin.Context, 'rpc' | 'location' | '
   // One fetch of the index at a time, shared by the calls that arrive while it runs.
   let indexLoad: ReturnType<typeof loadIndexTable> | undefined;
   const indexTable = () => indexLoad ??= loadIndexTable(context.storage as never, options.fetcher ?? fetch, (options.now ?? Date.now)()).finally(() => { indexLoad = undefined; });
-  const relayView = async (settings: RelaySettings, chat: Awaited<ReturnType<typeof listProjectModels>>, deciders: Awaited<ReturnType<typeof listProjectModels>>) => ({ directory: context.location.directory, settings, decisions: await recentDecisions(relayStore), deciders, checks: checksStatus(settings, chat) });
+  // The same for Artificial Analysis's list, which only a saved key may fetch.
+  let aaLoad: ReturnType<typeof loadAaModels> | undefined;
+  const aaModels = (key: string) => aaLoad ??= loadAaModels(context.storage, key, options.fetcher ?? fetch, (options.now ?? Date.now)()).finally(() => { aaLoad = undefined; });
+  const relayView = async (settings: RelaySettings, chat: Awaited<ReturnType<typeof listProjectModels>>, deciders: Awaited<ReturnType<typeof listProjectModels>>) => ({ directory: context.location.directory, settings, decisions: await recentDecisions(relayStore), deciders, checks: checksStatus(settings, chat), priceKey: (await getPriceKey(relayStore)) !== null });
   return context.rpc.register(RelayRpc, guarded({
     listModels: async () => ({ directory: context.location.directory, models: await listProjectModels(context) }),
+    // With a saved key the index is Artificial Analysis's own; without one, or when its list cannot be had, OpenRouter's copy of it.
     listIntelligence: async () => {
-      const [found, chat, deciders] = await Promise.all([indexTable(), listProjectModels(context), listProjectModels(context, 'decision')]);
-      const seen = new Set<string>();
-      const scores = [...chat, ...deciders].flatMap(model => {
-        const key = `${model.providerID}/${model.id}`, hit = seen.has(key) ? null : indexFor(model, found.table);
-        seen.add(key);
-        return hit ? [{ providerID: model.providerID, id: model.id, index: hit.index, matched: hit.matched }] : [];
-      });
-      return { directory: context.location.directory, source: INDEX_SOURCE, fetchedAt: found.fetchedAt, note: found.note, scores };
+      const [key, chat, deciders] = await Promise.all([getPriceKey(relayStore), listProjectModels(context), listProjectModels(context, 'decision')]);
+      const seen = new Set<string>(), models = [...chat, ...deciders].filter(model => { const name = `${model.providerID}/${model.id}`; return !seen.has(name) && !!seen.add(name); });
+      const aa = key ? await aaModels(key) : null;
+      if (aa?.models.length) {
+        const scores = models.flatMap(model => { const hit = aaFor({ ...model, variant: null }, aa.models); return hit && hit.index !== null ? [{ providerID: model.providerID, id: model.id, index: hit.index, matched: hit.slug }] : []; });
+        return { directory: context.location.directory, source: AA_SOURCE, fetchedAt: aa.fetchedAt, note: aa.note, scores };
+      }
+      const found = await indexTable();
+      const scores = models.flatMap(model => { const hit = indexFor(model, found.table); return hit ? [{ providerID: model.providerID, id: model.id, index: hit.index, matched: hit.matched }] : []; });
+      return { directory: context.location.directory, source: INDEX_SOURCE, fetchedAt: found.fetchedAt, note: [aa?.note, found.note].filter(Boolean).join('; ') || null, scores };
+    },
+    // Usage by model, for the panel and /relay-stats. Storage only, so the panel can ask every few seconds.
+    getRelayUsage: async () => {
+      const [usage, key] = await Promise.all([getUsage(relayStore), getPriceKey(relayStore)]);
+      return { directory: context.location.directory, ...usage, credit: key !== null || usage.rows.some(row => row.pricesFrom === 'artificial-analysis') ? AA_CREDIT : null };
+    },
+    // The key is saved and the list loaded with it at once, so a refused key shows now. The key is never sent back.
+    setPriceKey: async input => {
+      await setPriceKey(context.storage, (input as { key: string | null }).key);
+      const saved = await getPriceKey(relayStore);
+      return { saved: saved !== null, note: saved === null ? null : (await aaModels(saved)).note };
     },
     getRelay: async () => {
       const [settings, chat, deciders] = await Promise.all([getRelaySettings(relayStore), listProjectModels(context), listProjectModels(context, 'decision')]);

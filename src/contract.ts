@@ -32,13 +32,20 @@ const reply = {
   type: 'object', properties: { requests: { type: 'number' }, fresh: { type: 'number' }, cached: { type: 'number' }, costUsd: nullableString, seconds: nullableNumber, model: nullableString, total: { anyOf: [totals, { type: 'null' }] }, prices: { anyOf: [priceList, { type: 'null' }] }, pricesFrom: priceSource },
   required: ['requests', 'fresh', 'cached', 'costUsd', 'seconds', 'model', 'total', 'prices', 'pricesFrom'], additionalProperties: false,
 } as const;
+/** One model and effort in Usage by model: every reply Relay counted, added up. `byPrice` is tokens times each reply's price, by kind. */
+const usageRow = { type: 'object', properties: {
+  model: { type: 'string' }, messages: { type: 'number' }, requests: { type: 'number' }, input: { type: 'number' }, output: { type: 'number' }, reasoning: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' }, openCodeUsd: nullableString,
+  byPrice: { type: 'object', properties: { input: nullableString, output: nullableString, cacheRead: nullableString, cacheWrite: nullableString }, required: ['input', 'output', 'cacheRead', 'cacheWrite'], additionalProperties: false },
+  prices: { anyOf: [priceList, { type: 'null' }] }, pricesFrom: priceSource,
+}, required: ['model', 'messages', 'requests', 'input', 'output', 'reasoning', 'cacheRead', 'cacheWrite', 'openCodeUsd', 'byPrice', 'prices', 'pricesFrom'], additionalProperties: false } as const;
 const decision = { type: 'object', properties: { at: { type: 'string' }, sessionID: { type: 'string' }, kind: { type: 'string', enum: ['chat', 'helper'] }, mode: nullableMode, confidence: nullableNumber, fit: nullableNumber, model: nullableString, ms: { type: 'number' }, costUsd: nullableString, note: nullableString, messageID: nullableString, reply: { anyOf: [reply, { type: 'null' }] } }, required: ['at', 'sessionID', 'kind', 'mode', 'confidence', 'fit', 'model', 'ms', 'costUsd', 'note', 'messageID', 'reply'], additionalProperties: false } as const;
 const relayOutput = { type: 'object', properties: {
   directory: { type: 'string' },
   settings: { type: 'object', properties: { revision: { type: 'integer', minimum: 0 }, modes: modeLists, decider: nullableChoice }, required: ['revision', 'modes', 'decider'], additionalProperties: false },
   decisions: { type: 'array', items: decision }, deciders: { type: 'array', items: modelItem },
   checks: { type: 'object', properties: { active: { type: 'boolean' }, note: nullableString }, required: ['active', 'note'], additionalProperties: false },
-}, required: ['directory', 'settings', 'decisions', 'deciders', 'checks'], additionalProperties: false } as const;
+  priceKey: { type: 'boolean' },
+}, required: ['directory', 'settings', 'decisions', 'deciders', 'checks', 'priceKey'], additionalProperties: false } as const;
 /** The host reports any exception thrown by a handler as an opaque "RPC call failed", so a refusal the panel must show is returned as this declared error instead. */
 const errors = { rejected: { type: 'object', properties: {}, additionalProperties: false } } as const;
 const nothing = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -56,6 +63,10 @@ export const RelayRpc = Rpc.define({
     setRelayChat: { errors, input: { type: 'object', properties: { sessionID: { type: 'string' }, on: { type: 'boolean' } }, required: ['sessionID', 'on'], additionalProperties: false }, output: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'], additionalProperties: false } },
     /** What Relay would do with a sample message: the mode after the 0.6 rule, the model it would pick, and the note. Nothing is switched, sent or recorded. */
     testDecider: { errors, input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false }, output: { type: 'object', properties: { directory: { type: 'string' }, mode: nullableMode, confidence: nullableNumber, model: nullableString, fit: nullableNumber, ms: { type: 'number' }, costUsd: nullableString, note: nullableString }, required: ['directory', 'mode', 'confidence', 'model', 'fit', 'ms', 'costUsd', 'note'], additionalProperties: false } },
+    /** Usage by model: the totals of every reply Relay counted, and the credit Artificial Analysis asks for when its prices are used. Storage only. */
+    getRelayUsage: { errors, input: nothing, output: { type: 'object', properties: { directory: { type: 'string' }, since: nullableString, rows: { type: 'array', items: usageRow }, credit: nullableString }, required: ['directory', 'since', 'rows', 'credit'], additionalProperties: false } },
+    /** Saves the Artificial Analysis key, or with null removes it, and never returns it. `note` says why the list could not be loaded with it. */
+    setPriceKey: { errors, input: { type: 'object', properties: { key: nullableString }, required: ['key'], additionalProperties: false }, output: { type: 'object', properties: { saved: { type: 'boolean' }, note: nullableString }, required: ['saved', 'note'], additionalProperties: false } },
     listModels: { errors, input: nothing, output: { type: 'object', properties: { directory: { type: 'string' }, models: { type: 'array', items: modelItem } }, required: ['directory', 'models'], additionalProperties: false } },
     /** The intelligence index of each listed model that could be matched, with where it came from, when it was fetched, and why it may be old or missing. */
     listIntelligence: { errors, input: nothing, output: { type: 'object', properties: {
