@@ -50,7 +50,8 @@ test('the idle hook as registered reads what the reply took from the chat and ke
   await host.sessionHooks.find(hook => hook.name === 'prompt')!.handler({ sessionID: 'ses-b', messageID: 'm2', delivery: 'steer', prompt: { text: 'Check the diff for mistakes.' } });
   await new Promise(done => setTimeout(done, 20));   // the record is written after the hook returns
   await host.sessionHooks.find(hook => hook.name === 'experimental.idle')!.handler({ sessionID: 'ses-b', background: [] });
-  assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.messageID, item.reply]), [['m2', { requests: 1, fresh: 950, cached: 100, costUsd: '0.003', seconds: 0.5 }]]);
+  const total = { input: 900, output: 20, reasoning: 0, cacheRead: 100, cacheWrite: 50, costUsd: '0.003' }, prices = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null };
+  assert.deepEqual((records.get('relay/decisions') as any[]).map(item => [item.messageID, item.reply]), [['m2', { requests: 1, fresh: 950, cached: 100, costUsd: '0.003', seconds: 0.5, model: 'p/m', total, prices }]], "with the prices the host's model list gives, none here");
   assert.equal(host.asked.length, 1, 'the one decider request; reading the reply asks no model');
 });
 

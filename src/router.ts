@@ -1,6 +1,6 @@
 import { offered, type ModelChoice, type OfferedModel } from './settings.js';
 import { modelName, modes, type Decision, type Mode, type ModeChoice, type RelaySettings } from './relay-store.js';
-import { aboutUsd, parseUsd } from './costs.js';
+import { aboutUsd, parseUsd, pricesAt } from './costs.js';
 import type { ModelCostView } from './inventory.js';
 
 // Pure rules: which of a mode's models can be used now, which "use it for" lines the decider is asked about, and what its answer means for the chat.
@@ -110,7 +110,7 @@ type Price = { read: bigint; write: bigint; output: bigint };
 /** A model's prices for a chat of `tokens`, in trillionths of a dollar per million tokens. Null when there is nothing to compare: no price, or $0, which can mean "not listed". */
 function priceFor(cost: ModelCostView | undefined, tokens: number): Price | null {
   if (!cost) return null;
-  const at = [...cost.steps].reverse().find(step => tokens > step.above) ?? cost;
+  const at = pricesAt(cost, tokens);
   if (at.inputPerMillion === null || at.outputPerMillion === null) return null;
   try {
     const input = parseUsd(at.inputPerMillion), output = parseUsd(at.outputPerMillion);

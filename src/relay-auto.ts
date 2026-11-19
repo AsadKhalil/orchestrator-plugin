@@ -36,18 +36,21 @@ export function relayAutoHook(deps: RelayDeps) {
 
 /**
  * What a reply took. When a chat has finished its work, the host runs this just before the chat goes idle. For each record of that chat
- * that still waits, the reply is read from the chat's own messages and kept with the record. No model is asked. It never throws, and it
- * holds the chat for one second at most; a chat with no waiting record costs one read of storage.
+ * that still waits, the reply is read from the chat's own messages and kept with the record, with the prices the model list gives for the
+ * model that answered. No model is asked. It never throws, and it holds the chat for one second at most; a chat with no waiting record costs
+ * one read of storage.
  */
-export function relayReplyHook(deps: Pick<RelayDeps, 'session' | 'store' | 'readMs'>) {
+export function relayReplyHook(deps: Pick<RelayDeps, 'session' | 'store' | 'readMs' | 'chatModels'>) {
   const limitMs = Math.min(timingOf(deps).readMs, 1000);
   return async (event: { readonly sessionID: string }): Promise<void> => {
     try {
       await within(async () => {
         const waiting = await waitingReplies(deps.store, event.sessionID);
         if (!waiting.length) return;
-        const messages = await deps.session.context({ sessionID: event.sessionID as Session.ID });
-        const replies = new Map(waiting.flatMap(messageID => { const reply = replyOf(messages, messageID); return reply ? [[messageID, reply] as const] : []; }));
+        // A model list that fails, or takes more than half the time, leaves the prices unknown; the reply is kept all the same.
+        const [messages, models] = await Promise.all([deps.session.context({ sessionID: event.sessionID as Session.ID }), within(deps.chatModels, limitMs / 2).catch(() => null)]);
+        const listed = Array.isArray(models) ? models : null;
+        const replies = new Map(waiting.flatMap(messageID => { const reply = replyOf(messages, messageID, listed); return reply ? [[messageID, reply] as const] : []; }));
         if (replies.size) await saveReplies(deps.store, event.sessionID, replies);
       }, limitMs);
     } catch { /* the record is for the panel; the chat goes idle whatever happens here */ }

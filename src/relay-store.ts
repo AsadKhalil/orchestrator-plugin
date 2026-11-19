@@ -1,3 +1,4 @@
+import type { PriceStep } from './inventory.js';
 import { offered, validateChoices, type ModelChoice, type OfferedModel } from './settings.js';
 
 // What Relay keeps in plugin storage. The host shares plugin storage between projects, so there is one set of settings and one list of decisions.
@@ -13,11 +14,17 @@ export const USE_FOR_MAX = 200;
 /** A model chosen for a mode, with the person's own words for the kind of work it suits. An empty line means nothing was written. */
 export type ModeChoice = ModelChoice & { useFor: string };
 export type RelaySettings = { revision: number; modes: Record<Mode, ModeChoice[]>; decider: ModelChoice | null };
+/** USD for one million tokens, as the host lists them; null is unknown. */
+export type Prices = Omit<PriceStep, 'above'>;
+/** Every request of a reply added up, as the host counts tokens (`input` is read new and not written to a cache), and the host's own cost. */
+export type Totals = { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; costUsd: string | null };
 /**
  * What the reply to a placed message took, read from the chat afterwards: the tokens its first request read new (not from a cache) and from
- * a cache, that request's cost, the seconds until its first word, and how many requests the whole reply made.
+ * a cache, that request's cost, the seconds until its first word, and how many requests the whole reply made; the model and effort that
+ * answered, the whole reply added up, and that model's listed prices for the size of the first request. A reply kept before 19 Nov 2026 has
+ * no model, totals or prices.
  */
-export type Reply = { requests: number; fresh: number; cached: number; costUsd: string | null; seconds: number | null };
+export type Reply = { requests: number; fresh: number; cached: number; costUsd: string | null; seconds: number | null; model: string | null; total: Totals | null; prices: Prices | null };
 /**
  * One routing decision. It never holds the message text or a file name. `fit` is how sure the decider was about the "use it for" line.
  * `messageID` names the message the decision was made for, so that `reply` can be read once the chat has answered it.
@@ -28,6 +35,12 @@ export type RelayStore = { get(key: string): Promise<unknown>; set(key: string, 
 const SETTINGS = 'relay/settings', DECISIONS = 'relay/decisions', KEEP = 20;
 const same = (a: ModelChoice, b: ModelChoice) => a.providerID === b.providerID && a.id === b.id && a.variant === b.variant;
 export const modelName = (choice: ModelChoice) => `${choice.providerID}/${choice.id}${choice.variant === null ? '' : `#${choice.variant}`}`;
+/**
+ * A variant as the host reports it, in a choice's terms. The host names "no variant requested" `default` (seen on 2.2.7, even for a model that has
+ * no variants), while a choice uses `null`; compared raw, a chat on its default variant would never match a choice.
+ */
+// shortcut: a model with a real variant literally named `default` is treated as having none, because the host reports both the same way.
+export const hostVariant = (variant: string | null | undefined): string | null => (variant === undefined || variant === 'default' ? null : variant);
 
 function entries(value: unknown): ModeChoice[] {
   if (!Array.isArray(value)) throw new Error('Invalid mode choices');
@@ -81,7 +94,12 @@ function readable(value: unknown): Decision | null {
   if (!item || typeof item !== 'object' || typeof item.at !== 'string' || typeof item.sessionID !== 'string' || (item.kind !== 'chat' && item.kind !== 'helper') || typeof item.ms !== 'number') return null;
   const number = (field: unknown) => typeof field === 'number' && Number.isFinite(field) ? field : null, text = (field: unknown) => typeof field === 'string' ? field : null;
   const took = (item.reply && typeof item.reply === 'object' ? item.reply : {}) as Partial<Record<keyof Reply, unknown>>, requests = number(took.requests), fresh = number(took.fresh), cached = number(took.cached);
-  const reply = requests === null || fresh === null || cached === null ? null : { requests, fresh, cached, costUsd: text(took.costUsd), seconds: number(took.seconds) };
+  const sum = (took.total && typeof took.total === 'object' ? took.total : {}) as Partial<Record<keyof Totals, unknown>>;
+  const [input, output, reasoning, cacheRead, cacheWrite] = [sum.input, sum.output, sum.reasoning, sum.cacheRead, sum.cacheWrite].map(number);
+  const total = input === null || output === null || reasoning === null || cacheRead === null || cacheWrite === null ? null : { input, output, reasoning, cacheRead, cacheWrite, costUsd: text(sum.costUsd) };
+  const listed = took.prices && typeof took.prices === 'object' ? took.prices as Partial<Record<keyof Prices, unknown>> : null;
+  const prices = listed && { inputPerMillion: text(listed.inputPerMillion), outputPerMillion: text(listed.outputPerMillion), cacheReadPerMillion: text(listed.cacheReadPerMillion), cacheWritePerMillion: text(listed.cacheWritePerMillion) };
+  const reply = requests === null || fresh === null || cached === null ? null : { requests, fresh, cached, costUsd: text(took.costUsd), seconds: number(took.seconds), model: text(took.model), total, prices };
   return { at: item.at, sessionID: item.sessionID, kind: item.kind, mode: modes.find(mode => mode === item.mode) ?? null, confidence: number(item.confidence), fit: number(item.fit), model: text(item.model), ms: item.ms, costUsd: text(item.costUsd), note: text(item.note), messageID: text(item.messageID), reply };
 }
 const stored = async (store: Pick<RelayStore, 'get'>): Promise<Decision[]> => {

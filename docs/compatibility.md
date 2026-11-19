@@ -999,3 +999,15 @@ Nothing more was sent to the owner's service after 15:57.
 **Not tested.** A real bill. The `anthropic` provider with an API key, where the cost check runs. A real five-minute expiry. Chats above 32,000 tokens. Opus and Fable. A helper. Desktop. macOS and Linux.
 
 **The mock check on OpenCode 2.3.2.** `npm run smoke:host:model` passed against the 2.3.2 CLI on Windows on the same day ("PASS: on stock opencode v2.3.2 (win32)"), with mock models and a mock decider.
+
+## 2026-11-19 — Each record keeps the whole reply, the model that answered and its listed prices (Windows 11, OpenCode 2.3.2 CLI, mock models)
+
+`npm run smoke:host:model` passed with the 2.3.2 CLI that comes with Desktop, isolated, with mock models and a mock decider ("PASS: on stock opencode v2.3.2 (win32)"). Each record's reply named the model that answered, added up every request, and held the prices the host's model list gave for that model:
+
+- No decider, a model with no price in its config: `smoke/model-chat`, 10 tokens in, 5 out, and no price (all four prices null).
+- A reply on `smoke/model-cheap`: 5,000 tokens in, 5 out, 15,000 from cache, $0.01155, at $2, $10, $0.10 and $2.50 for a million tokens (in, out, cache read, cache write).
+- A reply of two requests (a tool call first) on `smoke/model-big`: 2,000 tokens in, 10 out, 122,000 from cache, $0.0326 for both requests ($0.0163 for the first), at $4, $20, $0.20 and $5.
+
+The effort comes from each answer's `model.variant`. In the real Claude test of 18 Nov (OpenCode 2.3.2), the answers carried `low` after a change of effort and `default` otherwise, and they carried tokens written to a cache (`cache.write`).
+
+**Not tested.** A model with efforts in this check (the mock models have none), reasoning tokens and tokens written to a cache (the mock reports neither), a reply that crosses a price step, a real model with the new record, and Desktop.

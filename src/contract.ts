@@ -23,8 +23,13 @@ const modeChoice = { type: 'object', properties: { ...choice.properties, useFor:
 const modeChoiceInput = { type: 'object', properties: { ...choice.properties, useFor: { type: 'string' } }, required: ['providerID', 'id', 'variant'], additionalProperties: false } as const;
 const modeLists = { type: 'object', properties: { plan: { type: 'array', items: modeChoice }, execute: { type: 'array', items: modeChoice }, review: { type: 'array', items: modeChoice } }, required: ['plan', 'execute', 'review'], additionalProperties: false } as const;
 const modeListsInput = { type: 'object', properties: { plan: { type: 'array', items: modeChoiceInput }, execute: { type: 'array', items: modeChoiceInput }, review: { type: 'array', items: modeChoiceInput } }, required: ['plan', 'execute', 'review'], additionalProperties: false } as const;
-/** What the reply to a placed message took; null until the chat has answered it. */
-const reply = { type: 'object', properties: { requests: { type: 'number' }, fresh: { type: 'number' }, cached: { type: 'number' }, costUsd: nullableString, seconds: nullableNumber }, required: ['requests', 'fresh', 'cached', 'costUsd', 'seconds'], additionalProperties: false } as const;
+const priceList = { type: 'object', properties: prices, required: [...priceNames], additionalProperties: false } as const;
+const totals = { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, reasoning: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' }, costUsd: nullableString }, required: ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite', 'costUsd'], additionalProperties: false } as const;
+/** What the reply to a placed message took; null until the chat has answered it. `total` and `prices` are null in a reply kept before 19 Nov 2026. */
+const reply = {
+  type: 'object', properties: { requests: { type: 'number' }, fresh: { type: 'number' }, cached: { type: 'number' }, costUsd: nullableString, seconds: nullableNumber, model: nullableString, total: { anyOf: [totals, { type: 'null' }] }, prices: { anyOf: [priceList, { type: 'null' }] } },
+  required: ['requests', 'fresh', 'cached', 'costUsd', 'seconds', 'model', 'total', 'prices'], additionalProperties: false,
+} as const;
 const decision = { type: 'object', properties: { at: { type: 'string' }, sessionID: { type: 'string' }, kind: { type: 'string', enum: ['chat', 'helper'] }, mode: nullableMode, confidence: nullableNumber, fit: nullableNumber, model: nullableString, ms: { type: 'number' }, costUsd: nullableString, note: nullableString, messageID: nullableString, reply: { anyOf: [reply, { type: 'null' }] } }, required: ['at', 'sessionID', 'kind', 'mode', 'confidence', 'fit', 'model', 'ms', 'costUsd', 'note', 'messageID', 'reply'], additionalProperties: false } as const;
 const relayOutput = { type: 'object', properties: {
   directory: { type: 'string' },

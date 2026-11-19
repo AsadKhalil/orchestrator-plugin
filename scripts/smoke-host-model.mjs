@@ -4,7 +4,8 @@
 // It checks that the plugin loads and lists models; sends one `/relay` message in a normal chat with no decider chosen (no switch, one request,
 // one record, and what the reply took); turns that chat's switch on with `/relay on`, keeps it across a server restart, and checks what the
 // `prompt` hook records; then turns it off with `/relay off`. Then, with a MOCK decision model as the decider and mock models that list prices:
-// a real switch of agent and model, what each reply took as OpenCode kept it, the whole chat fitting the model, and the stay-or-go check.
+// a real switch of agent and model, what each reply took as OpenCode kept it (the model that answered, every request added up, and that
+// model's listed prices), the whole chat fitting the model, and the stay-or-go check.
 // It does NOT exercise a real model or a real decider, a real cache, a helper, or the Desktop panel.
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
@@ -161,6 +162,8 @@ try {
   const [unplaced] = await recordsOf(chat.id);
   note('what the reply to /relay took', unplaced?.reply);
   assert.deepEqual([unplaced?.reply?.requests, unplaced?.reply?.fresh, unplaced?.reply?.cached, unplaced?.reply?.costUsd, typeof unplaced?.reply?.seconds], [1, 10, 0, '0', 'number']);
+  const unpriced = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null };
+  assert.deepEqual([unplaced?.reply?.model, unplaced?.reply?.total, unplaced?.reply?.prices], ['smoke/model-chat', { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, costUsd: '0' }, unpriced]);
   const idleFrom = Date.now(); await server.client.experimental.session.wait({ sessionID: chat.id });
   note('wait on an idle chat took (ms)', Date.now() - idleFrom);
   assert.ok(Date.now() - idleFrom < 5000, 'wait on an idle chat must return at once');
@@ -227,7 +230,10 @@ try {
   const moved = await server.client.session.get({ sessionID: long.id });
   assert.deepEqual([moved.agent, moved.model?.id], ['build', 'model-cheap']);
   // The mock reported 20,000 tokens read, 15,000 of them from a cache, and 5 written, at $2 / $0.10 / $10 for a million.
-  assert.deepEqual({ ...down.reply, seconds: typeof down.reply.seconds }, { requests: 1, fresh: 5000, cached: 15_000, costUsd: '0.01155', seconds: 'number' });
+  assert.deepEqual({ ...down.reply, seconds: typeof down.reply.seconds }, {
+    requests: 1, fresh: 5000, cached: 15_000, costUsd: '0.01155', seconds: 'number', model: 'smoke/model-cheap', total: { input: 5000, output: 5, reasoning: 0, cacheRead: 15_000, cacheWrite: 0, costUsd: '0.01155' },
+    prices: { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' },
+  });
 
   // A step up is what the line asked for: it is made, and the record says what it took.
   const up = await turn('the line of the dearer model: a step up', { mode: 'execute', line: '1' }, { prompt: 60_000, cached: 58_000 }, () => relay('Now the large change.'));
@@ -249,9 +255,11 @@ try {
   // A reply in which the model first reads a file takes two requests, and is counted as two.
   const tooled = await turn('a reply with a tool call', { mode: 'execute', line: '1' }, { prompt: 62_000, cached: 61_000 }, () => relay('TOOLCALL: read a.txt, then answer.'), 2);
   assert.deepEqual([tooled.reply.requests, tooled.reply.fresh, tooled.reply.cached], [2, 1000, 61_000]);
+  // The whole reply adds up both requests (each read 62,000 tokens, 61,000 of them from a cache, and wrote 5), at $4 / $0.20 / $20 for a million.
+  assert.deepEqual([tooled.reply.model, tooled.reply.total, tooled.reply.prices], ['smoke/model-big', { input: 2000, output: 10, reasoning: 0, cacheRead: 122_000, cacheWrite: 0, costUsd: '0.0326' }, { inputPerMillion: '4', outputPerMillion: '20', cacheReadPerMillion: '0.2', cacheWritePerMillion: '5' }]);
 
   const version = (await execFile(cli, ['--version'], { timeout: 20_000, env: isolated })).stdout.trim();
-  console.log(`PASS: on stock ${version} (${process.platform}) the packed plugin loaded from node_modules; /relay with no decider sent one message to the chat's own mock model and recorded it and what its reply took; /relay on kept the switch across a restart and placed each plain message once; /relay off stopped it; with a mock decider, /relay switched the agent and the model, a chat too long for a model was not offered it, a step down that did not pay left the chat on its model, and each record says what the reply took`);
+  console.log(`PASS: on stock ${version} (${process.platform}) the packed plugin loaded from node_modules; /relay with no decider sent one message to the chat's own mock model and recorded it and what its reply took; /relay on kept the switch across a restart and placed each plain message once; /relay off stopped it; with a mock decider, /relay switched the agent and the model, a chat too long for a model was not offered it, a step down that did not pay left the chat on its model, and each record says what the reply took: the model that answered, every request added up, and that model's listed prices`);
   for (const line of observed) console.log(`OBSERVED ${line}`);
   console.log('LIMIT: mock models and a mock decider only, so the tokens, prices and cache reads are what the mock reported, not what a provider charged; no real cache, no helper, and no Desktop panel was exercised');
 } catch (error) {

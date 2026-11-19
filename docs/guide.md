@@ -61,7 +61,13 @@ Add models to **Plan**, **Execute** and **Review**: press **+ Add a model** unde
 
 <img src="images/recent-choices.png" width="380" alt="Recent choices, with what each reply took">
 
-**Recent choices** at the bottom of the panel lists the last 20 decisions, for chats and helpers, and updates by itself. Once the chat has answered a message, its row also says what the first request of the reply took: the tokens read new, the tokens read from a cache, the cost OpenCode worked out (when the model has a listed price), the seconds until the first word, and how many requests the whole reply made. A switch to another model shows up there as a large "read new" number.
+**Recent choices** at the bottom of the panel lists the last 20 decisions, for chats and helpers, and updates by itself. Once the chat has answered a message, its row also says what the reply took:
+
+- **The reply:** the model and effort that answered, how many requests the reply made, and all of them added up: tokens in, out, reasoning (when there is any), read from a cache and written to a cache, with the cost OpenCode worked out (when the model has a listed price).
+- **Prices:** that model's listed prices for a million tokens: in, out, cache read and cache write, at the size of the reply's first request. "$0 or not listed" means OpenCode has no price for it, as for Claude through a subscription login.
+- **First request:** the tokens it read new (in, and written to a cache), the tokens it read from a cache, its cost, and the seconds until the first word. A switch to another model shows up there as a large "read new" number.
+
+A row kept before 19 Nov 2026 has no model, totals or prices, only the number of requests and the first request.
 
 The screenshots show the panel with example settings and example rows. The models, prices and index numbers are what OpenCode and Relay listed on 18 Nov 2026.
 

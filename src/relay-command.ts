@@ -6,7 +6,7 @@ import type { Session } from '@opencode/schema/session';
 import { LATE, within, type DecideInput } from './decider.js';
 import type { ListedModel } from './inventory.js';
 import { chatFacts } from './chat-facts.js';
-import { getRelaySettings, modelName, recentDecisions, recordDecision, setChatSwitch, type Decision, type RelayStore } from './relay-store.js';
+import { getRelaySettings, hostVariant, modelName, recentDecisions, recordDecision, setChatSwitch, type Decision, type RelayStore } from './relay-store.js';
 import { brief, linesFor, REVIEW_RULES_KEY, reviewRules, route, type DeciderAnswer } from './router.js';
 import type { ModelChoice } from './settings.js';
 
@@ -29,13 +29,6 @@ export type RelayDeps = {
 };
 type Invocation = { readonly sessionID: Session.ID; readonly prompt: PromptInput.Prompt; readonly delivery: 'steer' | 'queue' };
 type AttachedFile = { readonly uri?: string; readonly name?: string };
-
-/**
- * A variant as the host reports it, in a choice's terms. The host names "no variant requested" `default` (seen on 2.2.7, even for a model that has
- * no variants), while a choice uses `null`; compared raw, a chat on its default variant would never match a choice.
- */
-// shortcut: a model with a real variant literally named `default` is treated as having none, because the host reports both the same way.
-export const hostVariant = (variant: string | null | undefined): string | null => (variant === undefined || variant === 'default' ? null : variant);
 
 const PICTURE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 const bare = (uri: string) => uri.replace(/[?#].*$/, '');

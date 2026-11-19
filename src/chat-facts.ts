@@ -1,5 +1,6 @@
-import { usdString } from './costs.js';
-import type { Reply } from './relay-store.js';
+import { formatUsd, parseUsd, pricesAt, usdString } from './costs.js';
+import type { ListedModel } from './inventory.js';
+import { hostVariant, modelName, type Reply } from './relay-store.js';
 import type { ChatFacts } from './router.js';
 
 // What Relay reads from a chat's own messages, as `session.context` gives them (OpenCode 2.3.0, seen on an isolated host on 18 Nov 2026).
@@ -7,7 +8,7 @@ import type { ChatFacts } from './router.js';
 
 type Message = {
   id?: unknown; type?: unknown; status?: unknown; cost?: unknown; time?: { created?: unknown; firstToken?: unknown; completed?: unknown };
-  model?: { providerID?: unknown; id?: unknown }; tokens?: { input?: unknown; output?: unknown; cache?: { read?: unknown; write?: unknown } };
+  model?: { providerID?: unknown; id?: unknown; variant?: unknown }; tokens?: { input?: unknown; output?: unknown; reasoning?: unknown; cache?: { read?: unknown; write?: unknown } };
 };
 const list = (messages: unknown): Message[] => Array.isArray(messages) ? messages.filter(message => message && typeof message === 'object') : [];
 const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
@@ -18,8 +19,11 @@ const count = (value: unknown) => typeof value === 'number' && Number.isFinite(v
 const counts = (message: Message) => message.type === 'assistant' && message.tokens
   ? { fresh: count(message.tokens.input) + count(message.tokens.cache?.write), cached: count(message.tokens.cache?.read), output: count(message.tokens.output) } : null;
 
-/** What the reply to one message took, or null while it cannot be read: no such message, no answer to it yet, or an answer with no counts. */
-export function replyOf(messages: unknown, messageID: string): Reply | null {
+/**
+ * What the reply to one message took, or null while it cannot be read: no such message, no answer to it yet, or an answer with no counts.
+ * `models` gives the prices of the model that answered; without it, or without that model in it, the prices are unknown.
+ */
+export function replyOf(messages: unknown, messageID: string, models: readonly Pick<ListedModel, 'providerID' | 'id' | 'cost'>[] | null = null): Reply | null {
   const all = list(messages), at = all.findIndex(message => message.type === 'user' && message.id === messageID);
   if (at < 0) return null;
   const rest = all.slice(at + 1), next = rest.findIndex(message => message.type === 'user');
@@ -27,7 +31,20 @@ export function replyOf(messages: unknown, messageID: string): Reply | null {
   const answers = (next < 0 ? rest : rest.slice(0, next)).filter(message => message.type === 'assistant'), first = answers[0], read = first && counts(first);
   if (!read) return null;
   const asked = all[at].time?.created, word = first.time?.firstToken;
-  return { requests: answers.length, fresh: read.fresh, cached: read.cached, costUsd: usdString(first.cost), seconds: typeof asked === 'number' && typeof word === 'number' && word >= asked ? Math.round((word - asked) / 100) / 10 : null };
+  const { providerID, id, variant } = first.model ?? {}, named = typeof providerID === 'string' && typeof id === 'string';
+  const listed = named ? models?.find(model => model.providerID === providerID && model.id === id) : undefined;
+  const add = (pick: (tokens: NonNullable<Message['tokens']>) => unknown) => answers.reduce((sum, answer) => sum + (answer.tokens ? count(pick(answer.tokens)) : 0), 0);
+  const costs = answers.map(answer => usdString(answer.cost));
+  return {
+    requests: answers.length, fresh: read.fresh, cached: read.cached, costUsd: usdString(first.cost), seconds: typeof asked === 'number' && typeof word === 'number' && word >= asked ? Math.round((word - asked) / 100) / 10 : null,
+    model: named ? modelName({ providerID, id, variant: hostVariant(typeof variant === 'string' ? variant : undefined) }) : null,
+    total: {
+      input: add(tokens => tokens.input), output: add(tokens => tokens.output), reasoning: add(tokens => tokens.reasoning), cacheRead: add(tokens => tokens.cache?.read), cacheWrite: add(tokens => tokens.cache?.write),
+      costUsd: costs.every((cost): cost is string => cost !== null) ? formatUsd(costs.reduce((sum, cost) => sum + parseUsd(cost), 0n)) : null,
+    },
+    // shortcut: the prices for the size of the first request. Later requests of a long reply can cross a price step; the host's own cost above counts each request at its own step.
+    prices: listed ? pricesAt(listed.cost, read.fresh + read.cached) : null,
+  };
 }
 
 /**

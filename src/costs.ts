@@ -1,4 +1,12 @@
+import type { ModelCostView, PriceStep } from './inventory.js';
+
 const SCALE = 1_000_000_000_000n;
+
+/** The prices of a request that reads `tokens`: the largest step below that size, else the base price, as the host prices a request (2.3.0). */
+export function pricesAt(cost: ModelCostView, tokens: number): Omit<PriceStep, 'above'> {
+  const { inputPerMillion, outputPerMillion, cacheReadPerMillion, cacheWritePerMillion } = [...cost.steps].reverse().find(step => tokens > step.above) ?? cost;
+  return { inputPerMillion, outputPerMillion, cacheReadPerMillion, cacheWritePerMillion };
+}
 
 /** A price as the host reports it (a number of USD) becomes a USD string. Anything that is not a plain amount, or is too small to show in six decimals, is unknown. */
 export function usdString(value: unknown): string | null {

@@ -1,5 +1,5 @@
 import type { ModelCostView } from './inventory.js';
-import type { Decision, Reply } from './relay-store.js';
+import type { Decision, Prices, Reply } from './relay-store.js';
 import { modeLabel } from './router.js';
 import { MAX_CHARS, MAX_FILE_NAMES } from './decider.js';
 import { parseUsd } from './costs.js';
@@ -78,11 +78,23 @@ export function decisionLine(decision: (Shown & Pick<Decision, 'kind'>) | undefi
   return noted(`Last choice${decision.kind === 'helper' ? ' (a helper)' : ''}: ${outcome(decision)}`, decision.note);
 }
 const amount = (tokens: number) => Math.round(tokens).toLocaleString('en-US');
-/** What the reply took, once it is known. A cost of 0 can mean "not listed", so it is left out, like a cost that was not reported. */
-const took = (reply: Reply | null | undefined) => !reply ? '' : ` First request of the reply: ${[
-  `${amount(reply.fresh)} tokens read new`, `${amount(reply.cached)} from cache`,
-  ...(reply.costUsd === null || reply.costUsd === '0' ? [] : [`$${reply.costUsd}`]), ...(reply.seconds === null ? [] : [`first word after ${reply.seconds} s`]),
-].join(', ')}. Requests in the reply: ${reply.requests}.`;
+/** A cost of 0 can mean "not listed", so it is left out, like a cost that was not reported. */
+const cost = (usd: string | null) => usd === null || usd === '0' ? [] : [`$${usd}`];
+/** $0 for both input and output can mean "not listed", as with no price at all. A price that is not listed is left out. */
+const priced = (prices: Prices) => (prices.inputPerMillion ?? '0') === '0' && (prices.outputPerMillion ?? '0') === '0' ? ' Price: $0 or not listed.'
+  : ` Prices for a million tokens: ${([[prices.inputPerMillion, 'in'], [prices.outputPerMillion, 'out'], [prices.cacheReadPerMillion, 'cache read'], [prices.cacheWritePerMillion, 'cache write']] as const).flatMap(([usd, what]) => usd === null ? [] : [`$${usd} ${what}`]).join(', ')}.`;
+/** What the reply took, once it is known: the whole reply and the model that gave it, that model's prices, then the reply's first request. */
+const took = (reply: Reply | null | undefined) => {
+  if (!reply) return '';
+  const { total, requests } = reply;
+  const whole = total === null ? ` Requests in the reply: ${requests}.` : ` Reply${reply.model === null ? '' : ` from ${reply.model}`}: ${[
+    `${requests} request${requests === 1 ? '' : 's'}`, `${amount(total.input)} tokens in`, `${amount(total.output)} out`, ...(total.reasoning > 0 ? [`${amount(total.reasoning)} reasoning`] : []),
+    `${amount(total.cacheRead)} read from cache`, `${amount(total.cacheWrite)} written to cache`, ...cost(total.costUsd),
+  ].join(', ')}.`;
+  return `${whole}${reply.prices === null ? '' : priced(reply.prices)} First request: ${[
+    `${amount(reply.fresh)} tokens read new`, `${amount(reply.cached)} from cache`, ...cost(reply.costUsd), ...(reply.seconds === null ? [] : [`first word after ${reply.seconds} s`]),
+  ].join(', ')}.`;
+};
 /** One row of Recent choices. The time is left out: the panel shows it in the viewer's own clock. */
 export const recentLine = (decision: Shown & Pick<Decision, 'kind'> & { reply?: Reply | null }) => `${noted(`${decision.kind === 'helper' ? 'Helper' : 'Chat'}: ${outcome(decision)}`, decision.note)}${took(decision.reply)}`;
 

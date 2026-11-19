@@ -85,7 +85,10 @@ test('the last 20 decisions are kept, newest first, and what cannot be read is l
 
 test("a record keeps its message's id until what the reply took is read; other chats and records already filled are left alone", async () => {
   const db = store(), base = { sessionID: 'ses-1', kind: 'chat', mode: 'plan', confidence: 0.9, fit: null, model: 'p/m', ms: 150, costUsd: '0', note: null } as const;
-  const took = { requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6 }, other = { ...took, requests: 9 };
+  const took = {
+    requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/m#high', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' },
+    prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' },
+  }, other = { ...took, requests: 9 };
   await recordDecision(db, { ...base, at: 'one', messageID: 'msg-1' });
   await recordDecision(db, { ...base, at: 'two', messageID: 'msg-2' });
   await recordDecision(db, { ...base, at: 'three', sessionID: 'ses-2', messageID: 'msg-3' });
@@ -99,6 +102,9 @@ test("a record keeps its message's id until what the reply took is read; other c
   assert.deepEqual((await recentDecisions(db))[3].reply, took, 'a reply that was read once is not replaced');
   assert.deepEqual(await recentDecisions({ async get() { return [{ ...base, at: 'x', messageID: 7, reply: { ...took, requests: 'many' } }, { ...base, at: 'y', messageID: 'msg-9', reply: { ...took, costUsd: null, seconds: null, extra: 1 } }]; } }),
     [{ ...base, at: 'y', messageID: 'msg-9', reply: { ...took, costUsd: null, seconds: null } }, { ...base, at: 'x', messageID: null, reply: null }], 'what cannot be read is unknown, and an unknown field is dropped');
+  const { model: _model, total: _total, prices: _prices, ...older } = took;
+  assert.deepEqual((await recentDecisions({ async get() { return [{ ...base, at: 'z', messageID: 'msg-8', reply: older }, { ...base, at: 'w', messageID: 'msg-7', reply: { ...took, total: { ...took.total, output: 'lots' }, prices: { ...took.prices, outputPerMillion: 15 } } }]; } })).map(item => item.reply),
+    [{ ...took, total: null, prices: { ...took.prices, outputPerMillion: null } }, { ...older, model: null, total: null, prices: null }], 'a reply kept before 19 Nov 2026 has no model, totals or prices; totals with a count that is not a number are unknown');
 });
 
 test("a chat's switch starts off, turns on and off, is per chat, and anything but true reads as off", async () => {

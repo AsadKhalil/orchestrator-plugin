@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BUSY_CHECK_MS, relayAutoHook, relayReplyHook } from '../src/relay-auto.js';
 import { recentDecisions } from '../src/relay-store.js';
 import { reviewRules } from '../src/router.js';
-import { fakeRelay } from './relay-fakes.js';
+import { fakeModels, fakeRelay } from './relay-fakes.js';
 
 type Fake = ReturnType<typeof fakeRelay>;
 const event = (text: string, metadata?: Record<string, unknown>, sessionID = 'ses-1') => ({ sessionID, messageID: 'msg-1', delivery: 'steer', prompt: { text, files: [], agents: [], skills: [] }, ...(metadata ? { metadata } : {}) });
@@ -117,14 +117,18 @@ const replied = (created: number) => [
 ];
 const sleep = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
 
+const prices = { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' };
+const priced = fakeModels.map(model => model.id === 'exec' ? { ...model, cost: { ...model.cost, ...prices } } : model);
+const total = { input: 84_400, output: 380, reasoning: 0, cacheRead: 86_700, cacheWrite: 0, costUsd: '0.22' };
+
 test("when a chat goes idle, what the reply to each placed message took is read from the chat's own record and kept; no model is asked", async () => {
-  const f = turnOn(fakeRelay({ messages: replied(1000) }));
+  const f = turnOn(fakeRelay({ messages: replied(1000), models: priced }));
   await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);   // the record is written after the hook returns
   assert.deepEqual([(await last(f)).messageID, (await last(f)).reply], ['msg-1', null], 'the record waits for its reply');
   f.calls.length = 0;
   await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
-  assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9 });
-  assert.deepEqual(names(f).filter(name => !name.startsWith('storage')), ['context'], 'one read of the chat, and nothing else');
+  assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9, model: 'p/exec#high', total, prices });
+  assert.deepEqual(names(f).filter(name => !name.startsWith('storage')), ['context', 'models'], 'one read of the chat and one of the model list, for the prices');
   f.calls.length = 0;
   await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
   assert.equal(names(f).includes('context'), false, 'nothing waits, so the chat is not read again');
@@ -141,6 +145,16 @@ test('a reply that is not there yet leaves its record waiting for the next time 
   messages.push(...replied(1000));
   await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
   assert.equal((await last(f)).reply?.requests, 2);
+});
+
+test('a model list that fails or is slow leaves the prices unknown, and the reply is still kept', async () => {
+  for (const [label, list] of [['the list fails', async () => { throw new Error('no list'); }], ['the list never answers', () => new Promise<never>(() => undefined)]] as const) {
+    const f = turnOn(fakeRelay({ messages: replied(1000), readMs: 100 }));
+    await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);
+    f.deps.chatModels = list;
+    assert.equal(await settles(relayReplyHook(f.deps)({ sessionID: 'ses-1' }), 500), true, label);
+    assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9, model: 'p/exec#high', total, prices: null }, label);
+  }
 });
 
 test('the idle hook never throws and never holds a chat for long', async () => {
