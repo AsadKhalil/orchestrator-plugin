@@ -21,6 +21,16 @@ export function parseUsd(value: string): bigint {
   const [whole, fraction = ''] = value.split('.');
   return BigInt(whole) * SCALE + BigInt(fraction.padEnd(12, '0'));
 }
+/** A USD string read back from storage, or null when it is not one. */
+export function storedUsd(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try { parseUsd(value); return value; } catch { return null; }
+}
+/** What `tokens` cost at a price for a million tokens, in trillionths of a dollar; null when there is no price. */
+export function costOf(tokens: number, perMillion: string | null): bigint | null {
+  const price = storedUsd(perMillion);
+  return price === null ? null : BigInt(Math.max(0, Math.round(tokens))) * parseUsd(price) / 1_000_000n;
+}
 export function formatUsd(value: bigint): string {
   const whole = value / SCALE;
   const fraction = (value % SCALE).toString().padStart(12, '0').replace(/0+$/, '');

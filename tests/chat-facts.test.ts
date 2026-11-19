@@ -17,8 +17,8 @@ test("what a reply took: the first request's tokens read new and from cache, its
     user('m2', 2000), answer('a2', 'big', 2020, { input: 5672, read: 5672, write: 300 }, { cost: 0.0119612 }), answer('a3', 'big', 3000, { input: 40, read: 11400 }), answer('a4', 'big', 4000, { input: 50, read: 11500 }), idle(5000),
   ];
   const alone = { input: 11313, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, costUsd: '0.022676' };
-  assert.deepEqual(replyOf(messages, 'm1'), { requests: 1, fresh: 11313, cached: 0, costUsd: '0.022676', seconds: 0.6, model: 'p/big', total: alone, prices: null });
-  assert.deepEqual(replyOf(messages, 'm2'), { requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/big', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' }, prices: null },
+  assert.deepEqual(replyOf(messages, 'm1'), { requests: 1, fresh: 11313, cached: 0, costUsd: '0.022676', seconds: 0.6, model: 'p/big', total: alone, prices: null, pricesFrom: null });
+  assert.deepEqual(replyOf(messages, 'm2'), { requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/big', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' }, prices: null, pricesFrom: null },
     'tokens written to the cache were read new; the whole reply adds up all three requests');
 });
 
@@ -27,7 +27,7 @@ test('a reply names the model and effort that answered, and keeps the prices the
   const models = [{ providerID: 'p', id: 'big', cost: { ...base, tiered: true, steps: [{ above: 100_000, ...above }] } }];
   const reading = (read: number) => [user('m1', 1000), answer('a1', 'big', 1047, { input: 900, read, write: 50, output: 120 }, { model: { id: 'big', providerID: 'p', variant: 'low' } }), answer('a2', 'big', 2000, { input: 30, read: read + 1000 }, { tokens: { input: 30, output: 40, reasoning: 25, cache: { read: read + 1000, write: 0 } } })];
   const under = replyOf(reading(99_000), 'm1', models);
-  assert.deepEqual([under?.model, under?.prices, under?.total], ['p/big#low', base, { input: 930, output: 160, reasoning: 25, cacheRead: 199_000, cacheWrite: 50, costUsd: '0.045352' }], 'the first request read 99,950 tokens: the base prices');
+  assert.deepEqual([under?.model, under?.prices, under?.pricesFrom, under?.total], ['p/big#low', base, 'opencode', { input: 930, output: 160, reasoning: 25, cacheRead: 199_000, cacheWrite: 50, costUsd: '0.045352' }], 'the first request read 99,950 tokens: the base prices');
   assert.deepEqual(replyOf(reading(99_100), 'm1', models)?.prices, above, 'the first request read 100,050 tokens: the prices above 100,000');
   assert.equal(replyOf(reading(99_000), 'm1', [])?.prices, null, 'a model the list does not have');
   assert.equal(replyOf(reading(99_000), 'm1')?.prices, null, 'no list');
@@ -43,7 +43,7 @@ test('a reply that cannot be read yet, or at all, is null', () => {
   assert.equal(replyOf([user('m1', 1000), answer('a1', 'big', 1047, null)], 'm1'), null, 'an answer with no token counts, as after a stop');
   assert.equal(replyOf([user('m1', 1000), user('m2', 1500), answer('a1', 'big', 1600, { input: 10 })], 'm1'), null, 'the answer belongs to the next message');
   for (const odd of [null, 'text', [null, 7, {}]]) assert.equal(replyOf(odd as never, 'm1'), null);
-  assert.deepEqual(replyOf([user('m1', 1000), answer('a1', 'big', 1047, { input: 10 }, { cost: undefined, time: { created: 1047 } })], 'm1'), { requests: 1, fresh: 10, cached: 0, costUsd: null, seconds: null, model: 'p/big', total: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, costUsd: null }, prices: null }, 'no cost and no first word reported');
+  assert.deepEqual(replyOf([user('m1', 1000), answer('a1', 'big', 1047, { input: 10 }, { cost: undefined, time: { created: 1047 } })], 'm1'), { requests: 1, fresh: 10, cached: 0, costUsd: null, seconds: null, model: 'p/big', total: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, costUsd: null }, prices: null, pricesFrom: null }, 'no cost and no first word reported');
 });
 
 test("a chat's size is what its latest answer read and wrote, and each model's latest answer is kept with its age", () => {

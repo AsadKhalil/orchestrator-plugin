@@ -1,6 +1,6 @@
 import { formatUsd, parseUsd, pricesAt, usdString } from './costs.js';
 import type { ListedModel } from './inventory.js';
-import { hostVariant, modelName, type Reply } from './relay-store.js';
+import { hostVariant, modelName, type Prices, type Reply } from './relay-store.js';
 import type { ChatFacts } from './router.js';
 
 // What Relay reads from a chat's own messages, as `session.context` gives them (OpenCode 2.3.0, seen on an isolated host on 18 Nov 2026).
@@ -35,6 +35,8 @@ export function replyOf(messages: unknown, messageID: string, models: readonly P
   const listed = named ? models?.find(model => model.providerID === providerID && model.id === id) : undefined;
   const add = (pick: (tokens: NonNullable<Message['tokens']>) => unknown) => answers.reduce((sum, answer) => sum + (answer.tokens ? count(pick(answer.tokens)) : 0), 0);
   const costs = answers.map(answer => usdString(answer.cost));
+  // shortcut: the prices for the size of the first request. Later requests of a long reply can cross a price step; the host's own cost below counts each request at its own step.
+  const prices = listed ? pricesAt(listed.cost, read.fresh + read.cached) : null;
   return {
     requests: answers.length, fresh: read.fresh, cached: read.cached, costUsd: usdString(first.cost), seconds: typeof asked === 'number' && typeof word === 'number' && word >= asked ? Math.round((word - asked) / 100) / 10 : null,
     model: named ? modelName({ providerID, id, variant: hostVariant(typeof variant === 'string' ? variant : undefined) }) : null,
@@ -42,10 +44,11 @@ export function replyOf(messages: unknown, messageID: string, models: readonly P
       input: add(tokens => tokens.input), output: add(tokens => tokens.output), reasoning: add(tokens => tokens.reasoning), cacheRead: add(tokens => tokens.cache?.read), cacheWrite: add(tokens => tokens.cache?.write),
       costUsd: costs.every((cost): cost is string => cost !== null) ? formatUsd(costs.reduce((sum, cost) => sum + parseUsd(cost), 0n)) : null,
     },
-    // shortcut: the prices for the size of the first request. Later requests of a long reply can cross a price step; the host's own cost above counts each request at its own step.
-    prices: listed ? pricesAt(listed.cost, read.fresh + read.cached) : null,
+    prices, pricesFrom: prices && listedPrice(prices) ? 'opencode' : null,
   };
 }
+/** Whether OpenCode lists a price: $0 for both input and output can mean "not listed". */
+const listedPrice = (prices: Prices) => [prices.inputPerMillion, prices.outputPerMillion].some(price => price !== null && price !== '0');
 
 /**
  * The chat's size (what its latest finished answer read and wrote) and each model's latest finished answer, newest first. A finished

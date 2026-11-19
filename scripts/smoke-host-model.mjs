@@ -232,7 +232,7 @@ try {
   // The mock reported 20,000 tokens read, 15,000 of them from a cache, and 5 written, at $2 / $0.10 / $10 for a million.
   assert.deepEqual({ ...down.reply, seconds: typeof down.reply.seconds }, {
     requests: 1, fresh: 5000, cached: 15_000, costUsd: '0.01155', seconds: 'number', model: 'smoke/model-cheap', total: { input: 5000, output: 5, reasoning: 0, cacheRead: 15_000, cacheWrite: 0, costUsd: '0.01155' },
-    prices: { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' },
+    prices: { inputPerMillion: '2', outputPerMillion: '10', cacheReadPerMillion: '0.1', cacheWritePerMillion: '2.5' }, pricesFrom: 'opencode',
   });
 
   // A step up is what the line asked for: it is made, and the record says what it took.

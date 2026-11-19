@@ -127,7 +127,7 @@ test("when a chat goes idle, what the reply to each placed message took is read 
   assert.deepEqual([(await last(f)).messageID, (await last(f)).reply], ['msg-1', null], 'the record waits for its reply');
   f.calls.length = 0;
   await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
-  assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9, model: 'p/exec#high', total, prices });
+  assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9, model: 'p/exec#high', total, prices, pricesFrom: 'opencode' });
   assert.deepEqual(names(f).filter(name => !name.startsWith('storage')), ['context', 'models'], 'one read of the chat and one of the model list, for the prices');
   f.calls.length = 0;
   await relayReplyHook(f.deps)({ sessionID: 'ses-1' });
@@ -153,7 +153,7 @@ test('a model list that fails or is slow leaves the prices unknown, and the repl
     await relayAutoHook(f.deps)(event('fix the login test')); await sleep(20);
     f.deps.chatModels = list;
     assert.equal(await settles(relayReplyHook(f.deps)({ sessionID: 'ses-1' }), 500), true, label);
-    assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9, model: 'p/exec#high', total, prices: null }, label);
+    assert.deepEqual((await last(f)).reply, { requests: 2, fresh: 84_000, cached: 1200, costUsd: '0.21', seconds: 0.9, model: 'p/exec#high', total, prices: null, pricesFrom: null }, label);
   }
 });
 

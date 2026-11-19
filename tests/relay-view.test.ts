@@ -83,7 +83,7 @@ test('a recent choice says what its reply took, once that is known', () => {
   const prices = { inputPerMillion: '3' as string | null, outputPerMillion: '15' as string | null, cacheReadPerMillion: '0.3' as string | null, cacheWritePerMillion: '3.75' as string | null };
   const took = {
     requests: 14, fresh: 84_000, cached: 1200, costUsd: '0.21' as string | null, seconds: 9.2 as number | null, model: 'p/exec#high' as string | null,
-    total: { input: 84_400, output: 380, reasoning: 0, cacheRead: 86_700, cacheWrite: 0, costUsd: '0.22' as string | null }, prices: prices as typeof prices | null,
+    total: { input: 84_400, output: 380, reasoning: 0, cacheRead: 86_700, cacheWrite: 0, costUsd: '0.22' as string | null }, prices: prices as typeof prices | null, pricesFrom: 'opencode' as 'opencode' | 'artificial-analysis' | null,
   };
   assert.equal(recentLine({ ...chat, reply: took }), 'Chat: Execute, p/exec#high, 98% sure, 150 ms. Reply from p/exec#high: 14 requests, 84,400 tokens in, 380 out, 86,700 read from cache, 0 written to cache, $0.22. Prices for a million tokens: $3 in, $15 out, $0.3 cache read, $3.75 cache write. First request: 84,000 tokens read new, 1,200 from cache, $0.21, first word after 9.2 s.');
   const unlisted = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null };

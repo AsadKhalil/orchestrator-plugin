@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX, chatSwitch, setChatSwitch, waitingReplies, saveReplies } from '../src/relay-store.js';
+import { getRelaySettings, saveRelaySettings, recordDecision, recentDecisions, modelName, USE_FOR_MAX, chatSwitch, setChatSwitch, waitingReplies, saveReplies, getUsage } from '../src/relay-store.js';
 
 function store() { const map = new Map<string, unknown>(); return { map, async get(k: string) { return structuredClone(map.get(k)); }, async set(k: string, v: unknown) { await new Promise(r => setTimeout(r, 2)); map.set(k, structuredClone(v)); } }; }
 const chat = [{ providerID: 'p', id: 'm', enabled: true, status: 'active', variants: ['high'] }];
@@ -87,7 +87,7 @@ test("a record keeps its message's id until what the reply took is read; other c
   const db = store(), base = { sessionID: 'ses-1', kind: 'chat', mode: 'plan', confidence: 0.9, fit: null, model: 'p/m', ms: 150, costUsd: '0', note: null } as const;
   const took = {
     requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/m#high', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' },
-    prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' },
+    prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' }, pricesFrom: 'opencode' as const,
   }, other = { ...took, requests: 9 };
   await recordDecision(db, { ...base, at: 'one', messageID: 'msg-1' });
   await recordDecision(db, { ...base, at: 'two', messageID: 'msg-2' });
@@ -102,9 +102,48 @@ test("a record keeps its message's id until what the reply took is read; other c
   assert.deepEqual((await recentDecisions(db))[3].reply, took, 'a reply that was read once is not replaced');
   assert.deepEqual(await recentDecisions({ async get() { return [{ ...base, at: 'x', messageID: 7, reply: { ...took, requests: 'many' } }, { ...base, at: 'y', messageID: 'msg-9', reply: { ...took, costUsd: null, seconds: null, extra: 1 } }]; } }),
     [{ ...base, at: 'y', messageID: 'msg-9', reply: { ...took, costUsd: null, seconds: null } }, { ...base, at: 'x', messageID: null, reply: null }], 'what cannot be read is unknown, and an unknown field is dropped');
-  const { model: _model, total: _total, prices: _prices, ...older } = took;
-  assert.deepEqual((await recentDecisions({ async get() { return [{ ...base, at: 'z', messageID: 'msg-8', reply: older }, { ...base, at: 'w', messageID: 'msg-7', reply: { ...took, total: { ...took.total, output: 'lots' }, prices: { ...took.prices, outputPerMillion: 15 } } }]; } })).map(item => item.reply),
-    [{ ...took, total: null, prices: { ...took.prices, outputPerMillion: null } }, { ...older, model: null, total: null, prices: null }], 'a reply kept before 19 Nov 2026 has no model, totals or prices; totals with a count that is not a number are unknown');
+  const { model: _model, total: _total, prices: _prices, pricesFrom: _from, ...older } = took;
+  assert.deepEqual((await recentDecisions({ async get() { return [{ ...base, at: 'z', messageID: 'msg-8', reply: older }, { ...base, at: 'w', messageID: 'msg-7', reply: { ...took, total: { ...took.total, output: 'lots' }, prices: { ...took.prices, outputPerMillion: 15 }, pricesFrom: 'elsewhere' } }]; } })).map(item => item.reply),
+    [{ ...took, total: null, prices: { ...took.prices, outputPerMillion: null }, pricesFrom: null }, { ...older, model: null, total: null, prices: null, pricesFrom: null }], 'a reply kept before 19 Nov 2026 has no model, totals or prices; totals with a count that is not a number are unknown');
+});
+
+const reply = {
+  requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/m#high', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' },
+  prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: '3.75' } as Record<'inputPerMillion' | 'outputPerMillion' | 'cacheReadPerMillion' | 'cacheWritePerMillion', string | null>, pricesFrom: 'opencode' as 'opencode' | 'artificial-analysis' | null,
+};
+const placed = (at: string, messageID: string) => ({ at, sessionID: 'ses-1', kind: 'chat' as const, mode: 'execute' as const, confidence: 0.9, fit: null, model: 'p/m#high', ms: 150, costUsd: '0', note: null, messageID });
+
+test('each reply is added once to the totals of its model and effort', async () => {
+  const db = store(), at = Date.parse('2026-11-19T09:00:00Z');
+  for (const id of ['msg-1', 'msg-2', 'msg-3']) await recordDecision(db, placed(id, id));
+  assert.deepEqual(await getUsage(db), { since: null, rows: [] }, 'nothing counted yet');
+  await saveReplies(db, 'ses-1', new Map([['msg-1', reply]]), at);
+  await saveReplies(db, 'ses-1', new Map([['msg-1', reply]]), at + 1000);
+  await saveReplies(db, 'ses-1', new Map([['msg-2', reply], ['msg-3', { ...reply, model: 'p/n', requests: 1 }]]), at + 2000);
+  const usage = await getUsage(db);
+  assert.deepEqual([usage.since, usage.rows.map(row => [row.model, row.messages, row.requests])], ['2026-11-19T09:00:00.000Z', [['p/m#high', 2, 6], ['p/n', 1, 1]]], 'a reply that was kept once is not counted again');
+  assert.deepEqual(usage.rows[0], {
+    model: 'p/m#high', messages: 2, requests: 6, input: 11524, output: 30, reasoning: 0, cacheRead: 57144, cacheWrite: 600, openCodeUsd: '0.114626',
+    byPrice: { input: '0.034572', output: '0.00045', cacheRead: '0.0171432', cacheWrite: '0.00225' }, prices: reply.prices, pricesFrom: 'opencode',
+  });
+  assert.deepEqual(usage.rows[1].byPrice, { input: '0.017286', output: '0.000225', cacheRead: '0.0085716', cacheWrite: '0.001125' }, '5,762 in at $3, 15 out at $15, 28,572 from cache at $0.30 and 300 to cache at $3.75 for a million');
+});
+
+test('a reply with no price adds tokens and no cost by price', async () => {
+  const db = store(), unlisted = { inputPerMillion: null, outputPerMillion: null, cacheReadPerMillion: null, cacheWritePerMillion: null };
+  for (const id of ['msg-1', 'msg-2']) await recordDecision(db, placed(id, id));
+  await saveReplies(db, 'ses-1', new Map([['msg-1', { ...reply, model: 'claude-agent/sonnet', total: { ...reply.total, costUsd: '0' }, prices: unlisted, pricesFrom: null }]]));
+  await saveReplies(db, 'ses-1', new Map([['msg-2', { ...reply, prices: { ...reply.prices, cacheWritePerMillion: null } }]]));
+  const [claude, priced] = [(await getUsage(db)).rows.find(row => row.model === 'claude-agent/sonnet')!, (await getUsage(db)).rows.find(row => row.model === 'p/m#high')!];
+  assert.deepEqual([claude.input, claude.openCodeUsd, claude.byPrice, claude.pricesFrom], [5762, '0', { input: null, output: null, cacheRead: null, cacheWrite: null }, null]);
+  assert.deepEqual(priced.byPrice, { input: '0.017286', output: '0.000225', cacheRead: '0.0085716', cacheWrite: null }, 'a kind with no price has no cost by price');
+});
+
+test('totals that cannot be read start again', async () => {
+  assert.deepEqual(await getUsage({ async get() { return 'garbage'; } }), { since: null, rows: [] });
+  const good = { model: 'p/m', messages: 1, requests: 2, input: 3, output: 4, reasoning: 0, cacheRead: 5, cacheWrite: 6, openCodeUsd: '0.1', byPrice: { input: null, output: null, cacheRead: null, cacheWrite: null }, prices: null, pricesFrom: null };
+  assert.deepEqual(await getUsage({ async get() { return { since: '2026-11-19T09:00:00.000Z', rows: [good, { ...good, model: 'p/x', requests: 'x' }, 'odd', { ...good, model: 'p/y', byPrice: { input: 7 } }] }; } }),
+    { since: '2026-11-19T09:00:00.000Z', rows: [good, { ...good, model: 'p/y' }] }, 'a row with a count that is not a number is left out; a cost that is not an amount is unknown');
 });
 
 test("a chat's switch starts off, turns on and off, is per chat, and anything but true reads as off", async () => {

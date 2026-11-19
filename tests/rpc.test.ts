@@ -105,7 +105,7 @@ test('getRelay and saveRelay keep one set of settings for every project, and fit
 test('a record that says what its reply took fits what the panel and the pill declare', async () => {
   const host = relayHost(), one = await host.connect('/one'), took = {
     requests: 3, fresh: 5972, cached: 5672, costUsd: '0.011961', seconds: 0.6, model: 'p/m#high', total: { input: 5762, output: 15, reasoning: 0, cacheRead: 28572, cacheWrite: 300, costUsd: '0.057313' },
-    prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: null },
+    prices: { inputPerMillion: '3', outputPerMillion: '15', cacheReadPerMillion: '0.3', cacheWritePerMillion: null }, pricesFrom: 'opencode' as const,
   };
   await recordDecision(host.storage, { at: '2026-11-18T00:00:00.000Z', sessionID: 'ses-1', kind: 'chat', mode: 'execute', confidence: 0.9, fit: 0.8, model: 'p/m#high', ms: 150, costUsd: '0', note: null, messageID: 'msg-1' });
   await saveReplies(host.storage, 'ses-1', new Map([['msg-1', took]]));
