@@ -1145,7 +1145,7 @@ The six exercises together. `npx tsx scripts/bench/report.ts --sides off,on-one,
 - **Missing from the free plan:** prices for long chats, context windows and provider detail.
 - **A notice of 19 Nov:** the `performance` fields stop returning data on 10 Dec 2026, and `performance_v3` replaces them. Relay reads none of them.
 
-**Usage by model on a real host.** `npm run smoke:host:model` passed with the 2.3.2 CLI (isolated, mock models), before the fixes from the branch's review:
+**Usage by model on a real host.** `npm run smoke:host:model` passed with the 2.3.2 CLI (isolated, mock models), before and after the fixes from the branch's review, with the same totals:
 
 - **The totals came per model and effort.** `smoke/model-big`: 4 messages and 5 requests. `smoke/model-chat`: 3 and 3, with no price. `smoke/model-cheap`: 1 and 1, at $0.01 in, $0.00005 out and $0.0015 from cache by price; its whole row was checked.
 - **OpenCode listed Relay with all three parts:** `features` was `server`, `tui` and `gui`.
